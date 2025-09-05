@@ -330,30 +330,6 @@ def save_job_summarized_results(results, all_machines_results):
             print(f"Saved job-summarized results to: {filename}")
 
 
-
-
-
-
-def main():
-
-    """Main function."""
-    print("Starting bw_mean analysis...")
-    
-    # Analyze all directories
-    results, all_machines_results = analyze_all_directories()
-    
-    # Generate report
-    generate_report(results, all_machines_results)
-    
-    # Save results to files
-    save_results_to_files(results, all_machines_results)
-    
-    # Create graphs from job summaries
-    create_graphs_from_job_summaries()
-    
-    print("\nAnalysis complete!")
-
-
 def extract_fio_params_from_csv_filename(csv_filename):
     """Extract FIO parameters from the original JSON file based on CSV filename."""
     try:
@@ -427,7 +403,47 @@ def create_graphs_from_job_summaries():
                 bars = plt.plot(range(len(machines)), total_bw, marker='o', linewidth=1, markersize=2, color='navy', markerfacecolor='skyblue', markeredgecolor='navy')
 
                 # Remove X-axis labels completely
-                plt.xticks(range(len(machines)), [])
+
+                # Show every single machine if <= 100, otherwise every 10th for better visibility
+                x_positions = []
+                x_labels = []
+                if len(machines) <= 20:
+                    # Show every single machine
+                    for i in range(len(machines)):
+                        x_positions.append(i)
+                        x_labels.append(str(i + 1))
+                elif len(machines) > 20 and len(machines) <= 100:
+                    # Show every 5th machine for better visibility
+                    for i in range(len(machines)):
+                        if (i + 1) % 5 == 0 or i == 0:  # Show 1st and every 5th
+                            x_positions.append(i)
+                            x_labels.append(str(i + 1))
+                elif len(machines) > 100 and len(machines) <= 200:
+                    # Show every 10th machine for better visibility
+                    for i in range(len(machines)):
+                        if (i + 1) % 10 == 0 or i == 0:  # Show 1st and every 10th
+                            x_positions.append(i)
+                            x_labels.append(str(i + 1))
+                elif len(machines) > 200 and len(machines) <= 300:
+                    # Show every 15th machine for better visibility
+                    for i in range(len(machines)):
+                        if (i + 1) % 15 == 0 or i == 0:  # Show 1st and every 15th
+                            x_positions.append(i)
+                            x_labels.append(str(i + 1))
+                elif len(machines) > 300 and len(machines) <= 500:
+                    # Show every 20th machine for better visibility
+                    for i in range(len(machines)):
+                        if (i + 1) % 20 == 0 or i == 0:  # Show 1st and every 20th
+                            x_positions.append(i)
+                            x_labels.append(str(i + 1))
+                else:
+                    # Show every 10th machine for better visibility
+                    # For case when we have more than 500 machines - then show every 50th machine.
+                    for i in range(len(machines)):
+                        if (i + 1) % 50 == 0 or i == 0:  # Show 1st and every 50th
+                            x_positions.append(i)
+                            x_labels.append(str(i + 1))
+                plt.xticks(x_positions, x_labels)
                 
                 # Customize the plot
                 plt.ylabel('Total bw_mean per machine [KB]', fontsize=10, fontweight='bold')
@@ -440,7 +456,7 @@ def create_graphs_from_job_summaries():
                     if len(parts) >= 7:
                         block_size = parts[4]  # 128k
                         operation = parts[6]   # read
-                        title = f"size_{block_size}_operation_{operation}"
+                        title = f"Block_size_{block_size}_fio_operation_{operation}"
                     else:
                         title = csv_file.replace('_job_summary.csv', '')
                 else:
@@ -468,7 +484,7 @@ def create_graphs_from_job_summaries():
                 output_file = csv_file.replace('.csv', '.png')
                 
                 # Save the plot
-                plt.savefig(output_file, dpi=300, bbox_inches='tight')
+                plt.savefig(output_file, dpi=400, bbox_inches='tight')
                 plt.close()
                 
                 print(f"Created graph: {output_file}")
@@ -484,6 +500,27 @@ def create_graphs_from_job_summaries():
         print("Please install required dependencies: pip install matplotlib pandas")
     except Exception as e:
         print(f"Error in graph creation: {e}")
+
+
+def main():
+
+    """Main function."""
+    print("Starting bw_mean analysis...")
+    
+    # Analyze all directories
+    results, all_machines_results = analyze_all_directories()
+    
+    # Generate report
+    generate_report(results, all_machines_results)
+    
+    # Save results to files
+    save_results_to_files(results, all_machines_results)
+    
+    # Create graphs from job summaries
+    create_graphs_from_job_summaries()
+    
+    print("\nAnalysis complete!")
+
 
 
 if __name__ == "__main__":
