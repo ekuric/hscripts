@@ -375,7 +375,8 @@ def create_bar_graph(csv_file):
             subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
         
         # Customize the plot
-        plt.title(f'IOPS Performance (Bar Chart): {operation.upper()} - {block_size.upper()} Block Size', 
+        num_vms = len(df_sorted)
+        plt.title(f'IOPS Performance (Bar Chart): {operation.upper()} - {block_size.upper()} Block Size ({num_vms} VMs)', 
                  fontsize=16, fontweight='bold', pad=20)
         
         # Add subtitle with FIO configuration
@@ -454,7 +455,8 @@ def create_line_graph(csv_file):
             subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
         
         # Customize the plot
-        plt.title(f'IOPS Performance (Line Chart): {operation.upper()} - {block_size.upper()} Block Size', 
+        num_vms = len(df_sorted)
+        plt.title(f'IOPS Performance (Line Chart): {operation.upper()} - {block_size.upper()} Block Size ({num_vms} VMs)', 
                  fontsize=16, fontweight='bold', pad=20)
         
         # Add subtitle with FIO configuration
@@ -566,7 +568,8 @@ def create_simple_graphs(csv_file, graph_type):
         
         # Customize the plot
         chart_type = "Bar Chart" if graph_type == 'bar' else "Line Chart"
-        plt.title(f'IOPS Performance ({chart_type}): {operation.upper()} - {block_size.upper()} Block Size', 
+        num_vms = len(df_sorted)
+        plt.title(f'IOPS Performance ({chart_type}): {operation.upper()} - {block_size.upper()} Block Size (Total Tested {num_vms} VMs)', 
                  fontsize=16, fontweight='bold', pad=20)
         
         # Add subtitle with FIO configuration
