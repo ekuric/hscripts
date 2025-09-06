@@ -52,11 +52,71 @@ def extract_block_size_from_filename(filename):
         return match.group(1).lower()
     return 'unknown'
 
+# Global variable to store FIO configurations for subtitles
+FIO_CONFIGS = {}
+
+def extract_fio_config_from_json(json_file_path):
+    """
+    Extract FIO configuration from JSON file for subtitle display.
+    Returns a dictionary with configuration parameters.
+    """
+    config_data = {}
+    
+    try:
+        import json
+        with open(json_file_path, 'r') as f:
+            data = json.load(f)
+        
+        # Check if jobs exist
+        if 'jobs' not in data or len(data['jobs']) == 0:
+            return config_data
+        
+        # Extract from first job's options (assuming all jobs have similar config)
+        job_options = data['jobs'][0].get('job options', {})
+        
+        # Extract the requested parameters
+        config_data['size'] = job_options.get('size', 'N/A')
+        config_data['bs'] = job_options.get('bs', 'N/A')
+        config_data['runtime'] = job_options.get('runtime', 'N/A')
+        config_data['direct'] = job_options.get('direct', 'N/A')
+        config_data['numjobs'] = job_options.get('numjobs', 'N/A')
+        config_data['iodepth'] = job_options.get('iodepth', 'N/A')
+        config_data['rate_iops'] = job_options.get('rate_iops', None)  # May not be present
+        
+    except (json.JSONDecodeError, KeyError, FileNotFoundError) as e:
+        print(f"Error extracting config from {json_file_path}: {e}")
+    
+    return config_data
+
+def format_fio_subtitle(config_data):
+    """
+    Format FIO configuration data into a subtitle string.
+    """
+    subtitle_parts = []
+    
+    if config_data.get('size') != 'N/A':
+        subtitle_parts.append(f"Size: {config_data['size']}")
+    if config_data.get('bs') != 'N/A':
+        subtitle_parts.append(f"BS: {config_data['bs']}")
+    if config_data.get('runtime') != 'N/A':
+        subtitle_parts.append(f"Runtime: {config_data['runtime']}s")
+    if config_data.get('direct') != 'N/A':
+        subtitle_parts.append(f"Direct: {config_data['direct']}")
+    if config_data.get('numjobs') != 'N/A':
+        subtitle_parts.append(f"NumJobs: {config_data['numjobs']}")
+    if config_data.get('iodepth') != 'N/A':
+        subtitle_parts.append(f"IODepth: {config_data['iodepth']}")
+    if config_data.get('rate_iops'):
+        subtitle_parts.append(f"Rate IOPS: {config_data['rate_iops']}")
+    
+    return " | ".join(subtitle_parts)
 def extract_iops_from_json(json_file_path):
     """
     Extract IOPS values from a FIO JSON file.
     Returns a dictionary with operation types, block sizes, and their aggregated IOPS values.
+    Also stores FIO configuration data for subtitles.
     """
+    global FIO_CONFIGS
     iops_data = {}
     
     try:
@@ -88,6 +148,11 @@ def extract_iops_from_json(json_file_path):
         else:
             return iops_data
         
+        # Extract FIO configuration for subtitles
+        config_data = extract_fio_config_from_json(json_file_path)
+        config_key = (operation, block_size)
+        FIO_CONFIGS[config_key] = config_data
+        
         # Collect all IOPS values for this operation across all jobs
         iops_values = []
         
@@ -96,8 +161,8 @@ def extract_iops_from_json(json_file_path):
             # For randwrite, the data is stored under 'write' key
             data_key = 'read' if operation in ['read', 'randread'] else 'write'
             
-            if data_key in job and 'iops' in job[data_key]:
-                iops_value = job[data_key]['iops']
+            if data_key in job and 'iops_mean' in job[data_key]:
+                iops_value = job[data_key]['iops_mean']
                 if iops_value > 0:  # Only include non-zero IOPS
                     iops_values.append(iops_value)
         
@@ -297,9 +362,26 @@ def create_bar_graph(csv_file):
         bars = plt.bar(all_positions, df_sorted['iops'], 
                       color='skyblue', edgecolor='navy', alpha=0.7)
         
+        # Add IOPS values on bars if number of VMs is less than 20
+        if len(df_sorted) < 20:
+            for i, (pos, iops) in enumerate(zip(all_positions, df_sorted['iops'])):
+                plt.text(pos, iops + max(df_sorted['iops']) * 0.01, 
+                        f'{iops:,}', ha='center', va='bottom', fontsize=8, fontweight='bold')
+        
+        # Get FIO configuration for subtitle
+        config_key = (operation, block_size)
+        subtitle = ""
+        if config_key in FIO_CONFIGS:
+            subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
+        
         # Customize the plot
         plt.title(f'IOPS Performance (Bar Chart): {operation.upper()} - {block_size.upper()} Block Size', 
                  fontsize=16, fontweight='bold', pad=20)
+        
+        # Add subtitle with FIO configuration
+        if subtitle:
+            plt.suptitle(subtitle, fontsize=10, y=0.88, ha='center', va='top')
+        
         plt.xlabel('VM Index', fontsize=12, fontweight='bold')
         plt.ylabel('IOPS', fontsize=12, fontweight='bold')
         
@@ -359,9 +441,26 @@ def create_line_graph(csv_file):
                 color='steelblue', markerfacecolor='lightblue', 
                 markeredgecolor='navy', markeredgewidth=2)
         
+        # Add IOPS values on dots if number of VMs is less than 20
+        if len(df_sorted) < 20:
+            for i, (pos, iops) in enumerate(zip(all_positions, df_sorted['iops'])):
+                plt.text(pos, iops + max(df_sorted['iops']) * 0.02, 
+                        f'{iops:,}', ha='center', va='bottom', fontsize=8, fontweight='bold')
+        
+        # Get FIO configuration for subtitle
+        config_key = (operation, block_size)
+        subtitle = ""
+        if config_key in FIO_CONFIGS:
+            subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
+        
         # Customize the plot
         plt.title(f'IOPS Performance (Line Chart): {operation.upper()} - {block_size.upper()} Block Size', 
                  fontsize=16, fontweight='bold', pad=20)
+        
+        # Add subtitle with FIO configuration
+        if subtitle:
+            plt.suptitle(subtitle, fontsize=10, ha='center', va='top')
+        
         plt.xlabel('VM Index', fontsize=12, fontweight='bold')
         plt.ylabel('IOPS', fontsize=12, fontweight='bold')
         
@@ -429,6 +528,13 @@ def create_simple_graphs(csv_file, graph_type):
             bars = plt.bar(all_positions, df_sorted['iops'], 
                           color='skyblue', edgecolor='navy', alpha=0.7)
             
+            # Add IOPS values on bars if number of VMs is less than 20
+            # does not make sense to add this for more than 20 VMs - simly not readable! 
+            if len(df_sorted) < 20:
+                for i, (pos, iops) in enumerate(zip(all_positions, df_sorted['iops'])):
+                    plt.text(pos, iops + max(df_sorted['iops']) * 0.01, 
+                            f'{iops:,}', ha='center', va='bottom', fontsize=8, fontweight='bold')
+            
             # Add grid for better readability
             plt.grid(axis='y', alpha=0.3, linestyle='--')
             
@@ -439,16 +545,35 @@ def create_simple_graphs(csv_file, graph_type):
                     color='steelblue', markerfacecolor='lightblue', 
                     markeredgecolor='navy', markeredgewidth=2)
             
+            # Add IOPS values on dots if number of VMs is less than 100
+            # not making sense to add this for more than 20 VMs - simly not readable! 
+            if len(df_sorted) < 100:
+                for i, (pos, iops) in enumerate(zip(all_positions, df_sorted['iops'])):
+                    plt.text(pos, iops + max(df_sorted['iops']) * 0.02, 
+                            f'{iops:,}', ha='center', va='bottom', fontsize=8, fontweight='bold')
+            
             # Add grid for better readability
             plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
             plt.ylim(bottom=0)
             y_max = df_sorted['iops'].max()
             plt.ylim(top=y_max * 1.1)
         
+        # Get FIO configuration for subtitle
+        config_key = (operation, block_size)
+        subtitle = ""
+        if config_key in FIO_CONFIGS:
+            subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
+        
         # Customize the plot
         chart_type = "Bar Chart" if graph_type == 'bar' else "Line Chart"
         plt.title(f'IOPS Performance ({chart_type}): {operation.upper()} - {block_size.upper()} Block Size', 
                  fontsize=16, fontweight='bold', pad=20)
+        
+        # Add subtitle with FIO configuration
+        # y=0.91 is the best position for the subtitle - it is not cut off and it is not too high 
+        if subtitle:
+            plt.suptitle(subtitle, fontsize=10, y=0.91, ha='center', va='top')
+        
         plt.xlabel('VM Index', fontsize=12, fontweight='bold')
         plt.ylabel('IOPS', fontsize=12, fontweight='bold')
         
