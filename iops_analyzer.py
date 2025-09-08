@@ -381,7 +381,7 @@ def create_bar_graph(csv_file):
         
         # Add subtitle with FIO configuration
         if subtitle:
-            plt.suptitle(subtitle, fontsize=10, y=0.88, ha='center', va='top')
+            plt.suptitle(subtitle, fontsize=10, y=0.91, ha='center', va='top')
         
         plt.xlabel('VM Index', fontsize=12, fontweight='bold')
         plt.ylabel('IOPS', fontsize=12, fontweight='bold')
@@ -461,7 +461,7 @@ def create_line_graph(csv_file):
         
         # Add subtitle with FIO configuration
         if subtitle:
-            plt.suptitle(subtitle, fontsize=10, ha='center', va='top')
+            plt.suptitle(subtitle, fontsize=10, ha='center',y=0.91, va='top')
         
         plt.xlabel('VM Index', fontsize=12, fontweight='bold')
         plt.ylabel('IOPS', fontsize=12, fontweight='bold')
@@ -538,7 +538,10 @@ def create_simple_graphs(csv_file, graph_type):
                             f'{iops:,}', ha='center', va='bottom', fontsize=8, fontweight='bold')
             
             # Add grid for better readability
-            plt.grid(axis='y', alpha=0.3, linestyle='--')
+            if graph_type == 'bar':
+                plt.grid(axis='y', alpha=0.3, linestyle='--')
+            else:  # line graph
+                plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
             
         else:  # line
             # Create line plot
@@ -601,9 +604,10 @@ def create_simple_graphs(csv_file, graph_type):
         print(f"Error creating {graph_type} graph for {csv_file}: {e}")
         return False
 
-def create_operation_summary_graphs(csv_files):
+def create_operation_summary_graphs(csv_files, graph_type='bar'):
     """
     Create graphs for operation summary CSV files (all block sizes combined).
+    Supports both bar and line graphs.
     """
     if not HAS_PLOTTING:
         print("Cannot generate operation summary graphs: plotting libraries not available")
@@ -638,25 +642,55 @@ def create_operation_summary_graphs(csv_files):
             # Create numeric x-axis positions for all data points
             all_positions = range(len(df_sorted))
             
-            # Create bar plot for each block size
-            width = 0.8 / len(block_sizes)  # Width of each bar group
+            # Create plot based on graph type
             colors = plt.cm.Set3(np.linspace(0, 1, len(block_sizes)))
             
-            for i, block_size in enumerate(block_sizes):
-                offset = (i - len(block_sizes)/2 + 0.5) * width
-                display_name = get_block_size_display_name(block_size)
-                bars = plt.bar([pos + offset for pos in all_positions], 
-                              df_sorted[block_size], 
-                              width=width, 
-                              label=display_name,
-                              color=colors[i], 
-                              alpha=0.8,
-                              edgecolor='black',
-                              linewidth=0.5)
+            if graph_type == 'bar':
+                # Create bar plot for each block size
+                width = 0.8 / len(block_sizes)  # Width of each bar group
+                
+                for i, block_size in enumerate(block_sizes):
+                    offset = (i - len(block_sizes)/2 + 0.5) * width
+                    display_name = get_block_size_display_name(block_size)
+                    bars = plt.bar([pos + offset for pos in all_positions], 
+                                  df_sorted[block_size], 
+                                  width=width, 
+                                  label=display_name,
+                                  color=colors[i], 
+                                  alpha=0.8,
+                                  edgecolor='black',
+                                  linewidth=0.5)
+            else:  # line graph
+                # Create line plot for each block size
+                for i, block_size in enumerate(block_sizes):
+                    display_name = get_block_size_display_name(block_size)
+                    plt.plot(all_positions, df_sorted[block_size], 
+                            marker='o', linewidth=2, markersize=6,
+                            label=display_name,
+                            color=colors[i], 
+                            markerfacecolor=colors[i],
+                            markeredgecolor='black',
+                            markeredgewidth=1)
+            
+            # Get FIO configuration for subtitle (use first block size as reference)
+            subtitle = ""
+            if block_sizes:
+                # Use the first block size to get FIO config for subtitle
+                first_block_size = block_sizes[0]
+                config_key = (operation, first_block_size)
+                if config_key in FIO_CONFIGS:
+                    subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
             
             # Customize the plot
-            plt.title(f'IOPS Performance Comparison: {operation.upper()} - Selected Block Sizes', 
+            num_vms = len(df_sorted)
+            chart_type = "Bar Chart" if graph_type == 'bar' else "Line Chart"
+            plt.title(f'IOPS Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
                      fontsize=16, fontweight='bold', pad=20)
+            
+            # Add subtitle with FIO configuration
+            if subtitle:
+                plt.suptitle(subtitle, fontsize=10, y=0.91, ha='center', va='top')
+            
             plt.xlabel('VM Index', fontsize=12, fontweight='bold')
             plt.ylabel('IOPS', fontsize=12, fontweight='bold')
             
@@ -667,14 +701,18 @@ def create_operation_summary_graphs(csv_files):
             plt.legend(title='Block Size', bbox_to_anchor=(1.05, 1), loc='upper left')
             
             # Add grid for better readability
-            plt.grid(axis='y', alpha=0.3, linestyle='--')
+            if graph_type == 'bar':
+                plt.grid(axis='y', alpha=0.3, linestyle='--')
+            else:  # line graph
+                plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
             
             # Adjust layout to prevent label cutoff
             plt.tight_layout()
             
-            # Generate PNG filename with block sizes included
+            # Generate PNG filename with block sizes and graph type included
             block_sizes_str = '-'.join(block_sizes)
-            png_filename = csv_file.replace('.csv', f'_comparison-{block_sizes_str}.png')
+            graph_suffix = 'bar' if graph_type == 'bar' else 'line'
+            png_filename = csv_file.replace('.csv', f'_comparison-{block_sizes_str}_{graph_suffix}.png')
             
             # Save the plot
             plt.savefig(png_filename, dpi=300, bbox_inches='tight', 
