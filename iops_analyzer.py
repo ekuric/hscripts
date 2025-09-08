@@ -317,7 +317,7 @@ def extract_operation_and_blocksize_from_filename(filename):
 def get_x_axis_labels_and_positions(df_sorted):
     """
     Determine X-axis labels and positions based on number of VMs.
-    Show every VM if <= 100, otherwise show every 10th VM.
+    Show every VM if <= 20, otherwise show every 30th VM.
     """
     num_vms = len(df_sorted)
     # If num_vms is <= 20, show every VM - check this 
@@ -327,8 +327,8 @@ def get_x_axis_labels_and_positions(df_sorted):
         x_labels = [f'VM {i+1}' for i in x_positions]
         return x_positions, x_labels
     else:
-        # Show every 10th VM for better visibility
-        x_positions = range(0, num_vms, 10)
+        # Show every 30th VM for better visibility
+        x_positions = range(0, num_vms, 30)
         x_labels = [f'VM {i+1}' for i in x_positions]
         return x_positions, x_labels
 
