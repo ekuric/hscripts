@@ -374,7 +374,7 @@ def create_comparison_summary_csv(df, output_dir, metric_type='iops'):
     return csv_files
 
 
-def create_comparison_graphs(df, output_dir, graph_type='both', metric_type='iops'):
+def create_comparison_graphs(df, output_dir, graph_type='both', metric_type='iops', block_size_filter=None):
     """
     Create summary comparison graphs showing test1 vs test2 results for each operation.
     Similar to iops_analyzer.py operation summary graphs.
@@ -397,7 +397,20 @@ def create_comparison_graphs(df, output_dir, graph_type='both', metric_type='iop
         op_data = df[df['operation'] == operation]
         
         # Get unique block sizes and test names
-        block_sizes = sorted(op_data['block_size'].unique(), key=lambda x: int(x.replace('k', '')))
+        all_block_sizes = sorted(op_data['block_size'].unique(), key=lambda x: int(x.replace('k', '')))
+        
+        # Apply block size filter if specified
+        if block_size_filter:
+            # Convert filter to lowercase for case-insensitive matching
+            filter_lower = [bs.lower() for bs in block_size_filter]
+            block_sizes = [bs for bs in all_block_sizes if bs.lower() in filter_lower]
+            if not block_sizes:
+                print(f"Skipping {operation}: No block sizes match the filter {block_size_filter}")
+                continue
+            print(f"Filtering {operation} to block sizes: {block_sizes}")
+        else:
+            block_sizes = all_block_sizes
+            
         test_names = sorted(op_data['test_name'].unique())
         
         if len(test_names) < 2:
@@ -1001,6 +1014,8 @@ def main():
     parser.add_argument('--graphs', choices=['bar', 'line', 'both', 'none'], default='both',
                        help='Type of graphs to generate (default: both)')
     parser.add_argument('--output-dir', default='.', help='Output directory for results (default: current directory)')
+    parser.add_argument('--block-sizes', nargs='*', default=None,
+                       help='Specify block sizes to analyze (e.g., --block-sizes 4k 8k 128k). If not specified, all available block sizes will be used.')
     
     # Add metric selection group
     metric_group = parser.add_mutually_exclusive_group()
@@ -1081,7 +1096,7 @@ def main():
         print(f"\nStep 3: Creating {args.graphs} comparison graphs...")
         print("-" * 40)
         
-        success_count = create_comparison_graphs(df, args.output_dir, args.graphs, metric_type)
+        success_count = create_comparison_graphs(df, args.output_dir, args.graphs, metric_type, args.block_sizes)
         print(f"Successfully created {success_count} comparison graphs")
         
     
