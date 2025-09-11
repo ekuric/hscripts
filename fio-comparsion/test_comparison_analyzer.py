@@ -640,12 +640,11 @@ def generate_comparison_report(df, output_dir, metric_type='iops'):
         operations = sorted(df['operation'].unique())
         block_sizes = sorted(df['block_size'].unique(), key=lambda x: int(x.replace('k', '')))
         
-        metric_name = 'Bandwidth (bw_mean)' if metric_type == 'bw' else 'IOPS (iops_mean)'
         f.write(f"Tests compared: {', '.join(test_names)}\n")
         f.write(f"VMs analyzed: {', '.join(vm_names)}\n")
         f.write(f"Operations: {', '.join(operations)}\n")
         f.write(f"Block sizes: {', '.join([get_block_size_display_name(bs) for bs in block_sizes])}\n")
-        f.write(f"Metric type: {metric_name}\n\n")
+        f.write(f"Metric types: IOPS (iops_mean), Bandwidth (bw_mean)\n\n")
         
         # Performance comparison by operation
         for operation in operations:
@@ -662,37 +661,115 @@ def generate_comparison_report(df, output_dir, metric_type='iops'):
                 
                 f.write(f"\nBlock Size: {get_block_size_display_name(block_size)}\n")
                 
-                # Read metric comparison (sum across all VMs)
-                read_col = 'read_metric' if metric_type == 'bw' else 'read_iops'
-                read_comparison = bs_data.groupby('test_name')[read_col].sum().round(0)
-                f.write(f"Read {metric_name} (Total across all VMs):\n")
-                for test_name, value in read_comparison.items():
-                    f.write(f"  {test_name}: {value:,.0f} {metric_name}\n")
+                # Read IOPS comparison (sum across all VMs)
+                read_iops_comparison = bs_data.groupby('test_name')['read_iops'].sum().round(0)
+                f.write(f"Read IOPS (Total across all VMs):\n")
+                for test_name, value in read_iops_comparison.items():
+                    f.write(f"  {test_name}: {value:,.0f} IOPS\n")
                 
-                # Write metric comparison (sum across all VMs)
-                write_col = 'write_metric' if metric_type == 'bw' else 'write_iops'
-                write_comparison = bs_data.groupby('test_name')[write_col].sum().round(0)
-                f.write(f"Write {metric_name} (Total across all VMs):\n")
-                for test_name, value in write_comparison.items():
-                    f.write(f"  {test_name}: {value:,.0f} {metric_name}\n")
+                # Read IOPS comparison (average per VM)
+                read_iops_avg_comparison = bs_data.groupby('test_name')['read_iops'].mean().round(0)
+                f.write(f"Read IOPS (Average per VM):\n")
+                for test_name, value in read_iops_avg_comparison.items():
+                    f.write(f"  {test_name}: {value:,.0f} IOPS\n")
+                
+                # Read Bandwidth comparison (sum across all VMs)
+                read_bw_comparison = bs_data.groupby('test_name')['read_bw_kbps'].sum().round(0)
+                f.write(f"Read Bandwidth (Total across all VMs):\n")
+                for test_name, value in read_bw_comparison.items():
+                    f.write(f"  {test_name}: {value:,.0f} KB/s\n")
+                
+                # Read Bandwidth comparison (average per VM)
+                read_bw_avg_comparison = bs_data.groupby('test_name')['read_bw_kbps'].mean().round(0)
+                f.write(f"Read Bandwidth (Average per VM):\n")
+                for test_name, value in read_bw_avg_comparison.items():
+                    f.write(f"  {test_name}: {value:,.0f} KB/s\n")
+                
+                # Write IOPS comparison (sum across all VMs)
+                write_iops_comparison = bs_data.groupby('test_name')['write_iops'].sum().round(0)
+                f.write(f"Write IOPS (Total across all VMs):\n")
+                for test_name, value in write_iops_comparison.items():
+                    f.write(f"  {test_name}: {value:,.0f} IOPS\n")
+                
+                # Write IOPS comparison (average per VM)
+                write_iops_avg_comparison = bs_data.groupby('test_name')['write_iops'].mean().round(0)
+                f.write(f"Write IOPS (Average per VM):\n")
+                for test_name, value in write_iops_avg_comparison.items():
+                    f.write(f"  {test_name}: {value:,.0f} IOPS\n")
+                
+                # Write Bandwidth comparison (sum across all VMs)
+                write_bw_comparison = bs_data.groupby('test_name')['write_bw_kbps'].sum().round(0)
+                f.write(f"Write Bandwidth (Total across all VMs):\n")
+                for test_name, value in write_bw_comparison.items():
+                    f.write(f"  {test_name}: {value:,.0f} KB/s\n")
+                
+                # Write Bandwidth comparison (average per VM)
+                write_bw_avg_comparison = bs_data.groupby('test_name')['write_bw_kbps'].mean().round(0)
+                f.write(f"Write Bandwidth (Average per VM):\n")
+                for test_name, value in write_bw_avg_comparison.items():
+                    f.write(f"  {test_name}: {value:,.0f} KB/s\n")
                 
                 # Calculate improvement percentages for multiple tests
                 if len(test_names) >= 2:
                     # Calculate improvement from first to last test
                     first_test = test_names[0]
                     last_test = test_names[-1]
-                    first_read = read_comparison.get(first_test, 0)
-                    last_read = read_comparison.get(last_test, 0)
-                    first_write = write_comparison.get(first_test, 0)
-                    last_write = write_comparison.get(last_test, 0)
                     
-                    if first_read > 0 and last_read > 0:
-                        read_improvement = ((last_read - first_read) / first_read) * 100
-                        f.write(f"Read IOPS improvement ({first_test} to {last_test}): {read_improvement:+.1f}%\n")
+                    # Read IOPS improvements
+                    first_read_iops_total = read_iops_comparison.get(first_test, 0)
+                    last_read_iops_total = read_iops_comparison.get(last_test, 0)
+                    first_read_iops_avg = read_iops_avg_comparison.get(first_test, 0)
+                    last_read_iops_avg = read_iops_avg_comparison.get(last_test, 0)
                     
-                    if first_write > 0 and last_write > 0:
-                        write_improvement = ((last_write - first_write) / first_write) * 100
-                        f.write(f"Write IOPS improvement ({first_test} to {last_test}): {write_improvement:+.1f}%\n")
+                    if first_read_iops_total > 0 and last_read_iops_total > 0:
+                        read_iops_improvement_total = ((last_read_iops_total - first_read_iops_total) / first_read_iops_total) * 100
+                        f.write(f"Read IOPS improvement - Total ({first_test} to {last_test}): {read_iops_improvement_total:+.1f}%\n")
+                    
+                    if first_read_iops_avg > 0 and last_read_iops_avg > 0:
+                        read_iops_improvement_avg = ((last_read_iops_avg - first_read_iops_avg) / first_read_iops_avg) * 100
+                        f.write(f"Read IOPS improvement - Average per VM ({first_test} to {last_test}): {read_iops_improvement_avg:+.1f}%\n")
+                    
+                    # Read Bandwidth improvements
+                    first_read_bw_total = read_bw_comparison.get(first_test, 0)
+                    last_read_bw_total = read_bw_comparison.get(last_test, 0)
+                    first_read_bw_avg = read_bw_avg_comparison.get(first_test, 0)
+                    last_read_bw_avg = read_bw_avg_comparison.get(last_test, 0)
+                    
+                    if first_read_bw_total > 0 and last_read_bw_total > 0:
+                        read_bw_improvement_total = ((last_read_bw_total - first_read_bw_total) / first_read_bw_total) * 100
+                        f.write(f"Read Bandwidth improvement - Total ({first_test} to {last_test}): {read_bw_improvement_total:+.1f}%\n")
+                    
+                    if first_read_bw_avg > 0 and last_read_bw_avg > 0:
+                        read_bw_improvement_avg = ((last_read_bw_avg - first_read_bw_avg) / first_read_bw_avg) * 100
+                        f.write(f"Read Bandwidth improvement - Average per VM ({first_test} to {last_test}): {read_bw_improvement_avg:+.1f}%\n")
+                    
+                    # Write IOPS improvements
+                    first_write_iops_total = write_iops_comparison.get(first_test, 0)
+                    last_write_iops_total = write_iops_comparison.get(last_test, 0)
+                    first_write_iops_avg = write_iops_avg_comparison.get(first_test, 0)
+                    last_write_iops_avg = write_iops_avg_comparison.get(last_test, 0)
+                    
+                    if first_write_iops_total > 0 and last_write_iops_total > 0:
+                        write_iops_improvement_total = ((last_write_iops_total - first_write_iops_total) / first_write_iops_total) * 100
+                        f.write(f"Write IOPS improvement - Total ({first_test} to {last_test}): {write_iops_improvement_total:+.1f}%\n")
+                    
+                    if first_write_iops_avg > 0 and last_write_iops_avg > 0:
+                        write_iops_improvement_avg = ((last_write_iops_avg - first_write_iops_avg) / first_write_iops_avg) * 100
+                        f.write(f"Write IOPS improvement - Average per VM ({first_test} to {last_test}): {write_iops_improvement_avg:+.1f}%\n")
+                    
+                    # Write Bandwidth improvements
+                    first_write_bw_total = write_bw_comparison.get(first_test, 0)
+                    last_write_bw_total = write_bw_comparison.get(last_test, 0)
+                    first_write_bw_avg = write_bw_avg_comparison.get(first_test, 0)
+                    last_write_bw_avg = write_bw_avg_comparison.get(last_test, 0)
+                    
+                    if first_write_bw_total > 0 and last_write_bw_total > 0:
+                        write_bw_improvement_total = ((last_write_bw_total - first_write_bw_total) / first_write_bw_total) * 100
+                        f.write(f"Write Bandwidth improvement - Total ({first_test} to {last_test}): {write_bw_improvement_total:+.1f}%\n")
+                    
+                    if first_write_bw_avg > 0 and last_write_bw_avg > 0:
+                        write_bw_improvement_avg = ((last_write_bw_avg - first_write_bw_avg) / first_write_bw_avg) * 100
+                        f.write(f"Write Bandwidth improvement - Average per VM ({first_test} to {last_test}): {write_bw_improvement_avg:+.1f}%\n")
                 
                 f.write("\n")
     
