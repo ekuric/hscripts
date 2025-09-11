@@ -39,6 +39,7 @@ show_usage() {
     echo "  -h, --help              Show this help message"
     echo "  -g, --graphs TYPE       Graph type: bar, line, both (default: both)"
     echo "  -o, --output DIR        Output directory (default: current directory)"
+    echo "  -b, --block-sizes SIZE  Block sizes to analyze (e.g., 4k 8k 128k)"
     echo "  --iops                  Analyze IOPS performance (default)"
     echo "  --bw                    Analyze bandwidth performance"
     echo "  --clean                 Clean previous results before analysis"
@@ -48,6 +49,8 @@ show_usage() {
     echo "  $0 test1/ test2/ test3/ test4/             # Compare 4 test runs"
     echo "  $0 before/ after/ --graphs bar             # Bar charts only"
     echo "  $0 dir1/ dir2/ dir3/ --output results/     # Output to results directory"
+    echo "  $0 test1/ test2/ --block-sizes 4k 8k       # Analyze only 4k and 8k block sizes"
+    echo "  $0 test1/ test2/ -b 128k 1024k --bw        # Bandwidth analysis for 128k and 1024k"
     echo ""
     echo "Directory Structure Expected:"
     echo "  baseline/ (or any directory name)"
@@ -68,6 +71,7 @@ GRAPHS="both"
 OUTPUT_DIR="."
 CLEAN=false
 METRIC_TYPE=""
+BLOCK_SIZES=""
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -83,6 +87,15 @@ while [[ $# -gt 0 ]]; do
         -o|--output)
             OUTPUT_DIR="$2"
             shift 2
+            ;;
+        -b|--block-sizes)
+            # Collect all block sizes until we hit another option or end of arguments
+            BLOCK_SIZES=""
+            shift
+            while [[ $# -gt 0 && ! "$1" =~ ^- ]]; do
+                BLOCK_SIZES="$BLOCK_SIZES $1"
+                shift
+            done
             ;;
         --clean)
             CLEAN=true
@@ -167,6 +180,11 @@ for i in "${!DIRECTORIES[@]}"; do
 done
 print_status "Output directory: $OUTPUT_DIR"
 print_status "Graph type: $GRAPHS"
+if [[ -n "$BLOCK_SIZES" ]]; then
+    print_status "Block sizes: $BLOCK_SIZES"
+else
+    print_status "Block sizes: all available"
+fi
 
 # Build the command
 CMD="python3 test_comparison_analyzer.py"
@@ -176,6 +194,9 @@ done
 CMD="$CMD --graphs \"$GRAPHS\" --output-dir \"$OUTPUT_DIR\""
 if [[ -n "$METRIC_TYPE" ]]; then
     CMD="$CMD $METRIC_TYPE"
+fi
+if [[ -n "$BLOCK_SIZES" ]]; then
+    CMD="$CMD --block-sizes$BLOCK_SIZES"
 fi
 
 

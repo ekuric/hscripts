@@ -69,6 +69,13 @@ In future releases we will make it to work without these limitations.
 
 # Clean previous results and run
 ./compare_tests.sh baseline/ optimized/ --clean
+
+# check only specific block sizes 
+./compare_tests.sh test1/ test2/ --block-sizes 4k 8k       # Analyze only 4k and 8k block sizes
+
+# specific block sizes and bandwidth graphs 
+./compare_tests.sh test1/ test2/ -b 128k 1024k --bw        # Bandwidth analysis for 128k and 1024k
+
 ```
 
 ### Using Python Script Directly
