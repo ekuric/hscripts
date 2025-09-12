@@ -623,6 +623,20 @@ def create_single_graph(csv_file, graph_type, output_dir):
         # Remove X-axis labels completely
         plt.xticks(all_positions, [])
         
+        # Calculate average bandwidth (Total BW / number of machines)
+        total_bw_sum = sum(total_bw)
+        num_machines = len(machines)
+        average_bw = total_bw_sum / num_machines if num_machines > 0 else 0
+        
+        # Add horizontal line for average bandwidth
+        plt.axhline(y=average_bw, color='red', linestyle='--', linewidth=2, alpha=0.8, 
+                   label=f'Average: {average_bw:.1f} KB')
+        
+        # Add text annotation for the average value
+        plt.text(0.02, 0.98, f'Average BW: {average_bw:.1f} KB', 
+                transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
+                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
         # Customize the plot
         plt.ylabel('Total bw_mean per machine [KB]', fontsize=10, fontweight='bold')
         plt.xlabel('Test machines', fontsize=10, fontweight='bold')
@@ -666,6 +680,10 @@ def create_single_graph(csv_file, graph_type, output_dir):
             plt.grid(axis='y', alpha=0.3, linestyle='--')
         else:  # line graph
             plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+        
+        # Add legend for the average line
+        plt.legend(loc='upper right', fontsize=9)
+        
         plt.tight_layout()
         
         # Create output filename
