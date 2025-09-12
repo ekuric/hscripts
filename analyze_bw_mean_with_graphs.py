@@ -10,11 +10,83 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import glob
 import re
+import argparse
+import sys
 from collections import defaultdict
 from pathlib import Path
 
+# Global variable to store FIO configurations for subtitles
+FIO_CONFIGS = {}
+
+def get_block_size_display_name(block_size):
+    """Convert block size to display name."""
+    block_size_map = {
+        '4k': '4K',
+        '8k': '8K', 
+        '16k': '16K',
+        '32k': '32K',
+        '64k': '64K',
+        '128k': '128K',
+        '256k': '256K',
+        '512k': '512K',
+        '1024k': '1024K',
+        '4096k': '4096K'
+    }
+    return block_size_map.get(block_size.lower(), block_size.upper())
+
+def extract_fio_config_from_json(json_file_path):
+    """
+    Extract FIO configuration from JSON file for subtitle display.
+    Returns a dictionary with configuration parameters.
+    """
+    config_data = {}
+    try:
+        with open(json_file_path, 'r') as f:
+            data = json.load(f)
+        
+        # Extract configuration from first job
+        if 'jobs' in data and len(data['jobs']) > 0:
+            job_options = data['jobs'][0].get('job options', {})
+            config_data = {
+                'size': job_options.get('size', 'N/A'),
+                'bs': job_options.get('bs', 'N/A'),
+                'runtime': job_options.get('runtime', 'N/A'),
+                'direct': job_options.get('direct', 'N/A'),
+                'numjobs': job_options.get('numjobs', 'N/A'),
+                'iodepth': job_options.get('iodepth', 'N/A'),
+                'rate_iops': job_options.get('rate_iops', 'N/A')
+            }
+    except Exception as e:
+        print(f"Error extracting FIO config from {json_file_path}: {e}")
+    
+    return config_data
+
+def format_fio_subtitle(config_data):
+    """
+    Format FIO configuration data into a subtitle string.
+    """
+    subtitle_parts = []
+    
+    if config_data.get('size') != 'N/A':
+        subtitle_parts.append(f"Size: {config_data['size']}")
+    if config_data.get('bs') != 'N/A':
+        subtitle_parts.append(f"BS: {config_data['bs']}")
+    if config_data.get('runtime') != 'N/A':
+        subtitle_parts.append(f"Runtime: {config_data['runtime']}s")
+    if config_data.get('direct') != 'N/A':
+        subtitle_parts.append(f"Direct: {config_data['direct']}")
+    if config_data.get('numjobs') != 'N/A':
+        subtitle_parts.append(f"NumJobs: {config_data['numjobs']}")
+    if config_data.get('iodepth') != 'N/A':
+        subtitle_parts.append(f"IODepth: {config_data['iodepth']}")
+    if config_data.get('rate_iops') != 'N/A':
+        subtitle_parts.append(f"Rate IOPS: {config_data['rate_iops']}")
+    
+    return " | ".join(subtitle_parts)
+
 def extract_bw_mean_from_json(file_path):
     """Extract bw_mean values from a JSON file, filtering out zero values."""
+    global FIO_CONFIGS
     try:
         with open(file_path, 'r') as f:
             data = json.load(f)
@@ -69,19 +141,10 @@ def extract_bw_mean_from_json(file_path):
                     continue
         
 
-        # Extract FIO parameters from first job
-        if 'jobs' in data and len(data['jobs']) > 0:
-            job_options = data['jobs'][0].get('job options', {})
-            fio_params = {
-                'size': job_options.get('size', 'N/A'),
-                'bs': job_options.get('bs', 'N/A'),
-                'runtime': job_options.get('runtime', 'N/A'),
-                'direct': job_options.get('direct', 'N/A'),
-                'numjobs': job_options.get('numjobs', 'N/A'),
-                'iodepth': job_options.get('iodepth', 'N/A')
-            }
+        # Extract FIO configuration for subtitles
+        config_data = extract_fio_config_from_json(file_path)
         
-        return bw_values, fio_params
+        return bw_values, config_data
     
     except Exception as e:
         print(f"Error reading {file_path}: {e}")
@@ -95,20 +158,38 @@ def parse_filename_info(filename):
         return match.group(1), match.group(2)
     return None, None
 
-def analyze_all_directories():
+def analyze_all_directories(input_dir='.'):
     """Analyze all directories for JSON files and extract bw_mean values."""
     
-    # Get all directories
-    directories = [d for d in os.listdir('.') if os.path.isdir(d) and not d.startswith('.')]
+    # Find all directories containing FIO JSON files
+    test_dirs = []
+    for item in os.listdir(input_dir):
+        item_path = os.path.join(input_dir, item)
+        if os.path.isdir(item_path):
+            # Check if this directory contains FIO JSON files
+            json_files = glob.glob(os.path.join(item_path, "*.json"))
+            if json_files:
+                test_dirs.append(item_path)
+    
+    test_dirs.sort()  # Sort to ensure consistent order
+    
+    if not test_dirs:
+        print("No directories containing FIO JSON files found!")
+        return {}, {}
     
     # Results storage
     results = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     all_machines_results = defaultdict(lambda: defaultdict(list))
     
-    print(f"Found directories: {directories}")
+    print(f"Found {len(test_dirs)} directories with FIO JSON files:")
+    for test_dir in test_dirs:
+        dir_name = os.path.basename(test_dir)
+        json_count = len(glob.glob(os.path.join(test_dir, "*.json")))
+        print(f"  - {dir_name} ({json_count} JSON files)")
     
-    for directory in directories:
-        print(f"\nAnalyzing directory: {directory}")
+    for directory in test_dirs:
+        dir_name = os.path.basename(directory)
+        print(f"\nAnalyzing directory: {dir_name}")
         
         # Find all JSON files in this directory
         json_files = glob.glob(os.path.join(directory, "*.json"))
@@ -121,7 +202,11 @@ def analyze_all_directories():
                 print(f"  Processing: {filename} (op: {operation}, bs: {block_size})")
                 
                 # Extract bw_mean values
-                bw_values, fio_params = extract_bw_mean_from_json(json_file)
+                bw_values, config_data = extract_bw_mean_from_json(json_file)
+                
+                # Store FIO configuration for subtitles
+                config_key = (operation, block_size)
+                FIO_CONFIGS[config_key] = config_data
                 
                 for bw_data in bw_values:
                     # Store per machine
@@ -213,68 +298,96 @@ def generate_report(results, all_machines_results):
                     machine_mean = sum(machine_stats[machine]) / len(machine_stats[machine])
                     print(f"      {machine}: {machine_mean:.2f} (n={len(machine_stats[machine])})")
 
-def save_results_to_files(results, all_machines_results):
+def filter_results_by_block_sizes(results, all_machines_results, selected_block_sizes):
+    """Filter results to only include selected block sizes."""
+    filtered_results = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    filtered_all_machines_results = defaultdict(lambda: defaultdict(list))
+    
+    # Filter per-machine results
+    for machine in results:
+        for operation in results[machine]:
+            for block_size in results[machine][operation]:
+                if block_size in selected_block_sizes:
+                    filtered_results[machine][operation][block_size] = results[machine][operation][block_size]
+    
+    # Filter all-machines results
+    for operation in all_machines_results:
+        for block_size in all_machines_results[operation]:
+            if block_size in selected_block_sizes:
+                filtered_all_machines_results[operation][block_size] = all_machines_results[operation][block_size]
+    
+    return filtered_results, filtered_all_machines_results
+
+def save_results_to_files(results, all_machines_results, output_dir='.', selected_block_sizes=None):
     """Save results to CSV files for further analysis."""
     
     # Save per-machine results
     for machine in results.keys():
-        filename = f"{machine}_bw_mean_results.csv"
-        with open(filename, 'w') as f:
+        filename = f"{os.path.basename(machine)}_bw_mean_results.csv"
+        filepath = os.path.join(output_dir, filename)
+        with open(filepath, 'w') as f:
             f.write("Operation,BlockSize,JobName,BwMean\n")
             for operation in results[machine].keys():
                 for block_size in results[machine][operation].keys():
                     for item in results[machine][operation][block_size]:
                         f.write(f"{operation},{block_size},{item['job_name']},{item['bw_mean']}\n")
-        print(f"Saved per-machine results to: {filename}")
+        print(f"Saved per-machine results to: {filepath}")
     
     # Save aggregated results per operation
     for operation in all_machines_results.keys():
         filename = f"{operation}_all_machines_bw_mean_results.csv"
-        with open(filename, 'w') as f:
+        filepath = os.path.join(output_dir, filename)
+        with open(filepath, 'w') as f:
             f.write("BlockSize,Machine,JobName,BwMean\n")
             for block_size in all_machines_results[operation].keys():
                 for item in all_machines_results[operation][block_size]:
                     f.write(f"{block_size},{item['machine']},{item['job_name']},{item['bw_mean']}\n")
-        print(f"Saved {operation} aggregated results to: {filename}")
+        print(f"Saved {operation} aggregated results to: {filepath}")
     
     # Save results per block size and operation combination
     for operation in all_machines_results.keys():
         for block_size in all_machines_results[operation].keys():
+            # Skip if block size filtering is enabled and this block size is not selected
+            if selected_block_sizes and block_size not in selected_block_sizes:
+                continue
+                
             # Create filename with block size and operation
             # Replace 'k' with 'k' and format the filename
             if block_size.endswith('k'):
                 size_part = block_size
             else:
-
                 size_part = block_size
             
             filename = f"all_machines_block_size_{size_part}_operation_{operation}.csv"
-            with open(filename, 'w') as f:
+            filepath = os.path.join(output_dir, filename)
+            with open(filepath, 'w') as f:
                 f.write("Machine,JobName,BwMean\n")
                 for item in all_machines_results[operation][block_size]:
                     f.write(f"{item['machine']},{item['job_name']},{item['bw_mean']}\n")
-            print(f"Saved block size {block_size} operation {operation} results to: {filename}")
+            print(f"Saved block size {block_size} operation {operation} results to: {filepath}")
     
     # Also save combined results for backward compatibility
     filename = "all_machines_bw_mean_results.csv"
-    with open(filename, 'w') as f:
+    filepath = os.path.join(output_dir, filename)
+    with open(filepath, 'w') as f:
         f.write("Operation,BlockSize,Machine,JobName,BwMean\n")
         for operation in all_machines_results.keys():
             for block_size in all_machines_results[operation].keys():
                 for item in all_machines_results[operation][block_size]:
                     f.write(f"{operation},{block_size},{item['machine']},{item['job_name']},{item['bw_mean']}\n")
-    print(f"Saved combined aggregated results to: {filename}")
+    print(f"Saved combined aggregated results to: {filepath}")
     
     # Save job-summarized results (sum of all jobs per machine)
-    save_job_summarized_results(results, all_machines_results)
+    save_job_summarized_results(results, all_machines_results, output_dir, selected_block_sizes)
 
-def save_job_summarized_results(results, all_machines_results):
+def save_job_summarized_results(results, all_machines_results, output_dir='.', selected_block_sizes=None):
     """Save results with sum of all jobs per machine, operation, and block size."""
     
     # Save per-machine job-summarized results
     for machine in results.keys():
-        filename = f"{machine}_bw_mean_job_summary.csv"
-        with open(filename, 'w') as f:
+        filename = f"{os.path.basename(machine)}_bw_mean_job_summary.csv"
+        filepath = os.path.join(output_dir, filename)
+        with open(filepath, 'w') as f:
             f.write("Operation,BlockSize,TotalBwMean\n")
             for operation in results[machine].keys():
                 for block_size in results[machine][operation].keys():
@@ -282,11 +395,12 @@ def save_job_summarized_results(results, all_machines_results):
                     total_bw = sum(item['bw_mean'] for item in items)
                     
                     f.write(f"{operation},{block_size},{total_bw}\n")
-        print(f"Saved job-summarized results to: {filename}")
+        print(f"Saved job-summarized results to: {filepath}")
     
     # Save all machines job-summarized results
     filename = "all_machines_bw_mean_job_summary.csv"
-    with open(filename, 'w') as f:
+    filepath = os.path.join(output_dir, filename)
+    with open(filepath, 'w') as f:
         f.write("Operation,BlockSize,Machine,TotalBwMean\n")
         for operation in all_machines_results.keys():
             for block_size in all_machines_results[operation].keys():
@@ -304,13 +418,18 @@ def save_job_summarized_results(results, all_machines_results):
                     
                     f.write(f"{operation},{block_size},{machine},{total_bw}\n")
     
-    print(f"Saved all machines job-summarized results to: {filename}")
+    print(f"Saved all machines job-summarized results to: {filepath}")
     
     # Save block size and operation specific job-summarized results
     for operation in all_machines_results.keys():
         for block_size in all_machines_results[operation].keys():
+            # Skip if block size filtering is enabled and this block size is not selected
+            if selected_block_sizes and block_size not in selected_block_sizes:
+                continue
+                
             filename = f"all_machines_block_size_{block_size}_operation_{operation}_job_summary.csv"
-            with open(filename, 'w') as f:
+            filepath = os.path.join(output_dir, filename)
+            with open(filepath, 'w') as f:
                 f.write("Machine,TotalBwMean\n")
                 
                 # Group by machine
@@ -327,7 +446,7 @@ def save_job_summarized_results(results, all_machines_results):
                     
                     f.write(f"{machine},{total_bw}\n")
             
-            print(f"Saved job-summarized results to: {filename}")
+            print(f"Saved job-summarized results to: {filepath}")
 
 
 
@@ -335,61 +454,98 @@ def save_job_summarized_results(results, all_machines_results):
 
 
 def main():
-
     """Main function."""
-    print("Starting bw_mean analysis...")
+    parser = argparse.ArgumentParser(
+        description='Bandwidth Analysis Tool for FIO Results',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python3 analyze_bw_mean_with_graphs.py                    # Analyze current directory
+  python3 analyze_bw_mean_with_graphs.py --input-dir /path/to/data  # Analyze specific directory
+  python3 analyze_bw_mean_with_graphs.py --output-dir /path/to/results  # Save results to specific directory
+  python3 analyze_bw_mean_with_graphs.py --graph-type line  # Generate line graphs
+  python3 analyze_bw_mean_with_graphs.py --graph-type both  # Generate both bar and line graphs
+  python3 analyze_bw_mean_with_graphs.py --block-sizes 4k,8k,128k  # Analyze specific block sizes
+  python3 analyze_bw_mean_with_graphs.py --input-dir /data --output-dir /results --graph-type line --block-sizes 4k,8k  # All options
+        """
+    )
+    
+    parser.add_argument('--input-dir',
+                       type=str,
+                       default='.',
+                       help='Directory containing FIO JSON files in subdirectories (any name). Default: current directory')
+    
+    parser.add_argument('--output-dir',
+                       type=str,
+                       default='.',
+                       help='Directory to save output files (CSV and PNG). Default: current directory')
+    
+    parser.add_argument('--graph-type',
+                       choices=['bar', 'line', 'both'],
+                       default='bar',
+                       help='Type of graphs to generate (default: bar)')
+    
+    parser.add_argument('--block-sizes',
+                       type=str,
+                       help='Comma-separated list of block sizes to analyze (e.g., "4k,8k,128k")')
+    
+    args = parser.parse_args()
+    
+    # Validate input directory
+    input_dir = os.path.abspath(args.input_dir)
+    if not os.path.exists(input_dir):
+        print(f"Error: Input directory does not exist: {input_dir}")
+        sys.exit(1)
+    
+    # Create output directory if it doesn't exist
+    output_dir = os.path.abspath(args.output_dir)
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        print(f"Created output directory: {output_dir}")
+    else:
+        print(f"Using output directory: {output_dir}")
+    
+    print("=" * 60)
+    print("BANDWIDTH ANALYSIS TOOL")
+    print("=" * 60)
+    print(f"Using input directory: {input_dir}")
+    print(f"Using output directory: {output_dir}")
     
     # Analyze all directories
-    results, all_machines_results = analyze_all_directories()
+    results, all_machines_results = analyze_all_directories(input_dir)
+    
+    if not results:
+        print("No data found to analyze.")
+        return
+    
+    # Parse selected block sizes if provided
+    selected_block_sizes = None
+    if args.block_sizes:
+        selected_block_sizes = [bs.strip().lower() for bs in args.block_sizes.split(',')]
+        display_selected = [get_block_size_display_name(bs) for bs in selected_block_sizes]
+        print(f"Selected block sizes for analysis: {', '.join(display_selected)}")
+        
+        # Filter results to only include selected block sizes
+        results, all_machines_results = filter_results_by_block_sizes(results, all_machines_results, selected_block_sizes)
+        
+        if not results:
+            print("No data found for the selected block sizes.")
+            return
     
     # Generate report
     generate_report(results, all_machines_results)
     
     # Save results to files
-    save_results_to_files(results, all_machines_results)
+    save_results_to_files(results, all_machines_results, output_dir, selected_block_sizes)
     
     # Create graphs from job summaries
-    create_graphs_from_job_summaries()
+    create_graphs_from_job_summaries(output_dir, args.graph_type)
     
     print("\nAnalysis complete!")
 
 
-def extract_fio_params_from_csv_filename(csv_filename):
-    """Extract FIO parameters from the original JSON file based on CSV filename."""
-    try:
-        # Parse the CSV filename to get operation and block_size
-        # Format: all_machines_block_size_4k_operation_read_job_summary.csv
-        parts = csv_filename.replace('_job_summary.csv', '').split('_')
-        if len(parts) >= 7:
-            block_size = parts[4]  # 4k
-            operation = parts[6]   # read
-            
-            # Find the original JSON file
-            json_pattern = f"fio-test-{operation}-bs-{block_size}.json"
-            json_files = glob.glob(f"*/{json_pattern}")
-            
-            if json_files:
-                # Read the first JSON file found
-                with open(json_files[0], 'r') as f:
-                    data = json.load(f)
-                
-                # Extract FIO parameters from first job
-                if 'jobs' in data and len(data['jobs']) > 0:
-                    job_options = data['jobs'][0].get('job options', {})
-                    return {
-                        'size': job_options.get('size', 'N/A'),
-                        'bs': job_options.get('bs', 'N/A'),
-                        'runtime': job_options.get('runtime', 'N/A'),
-                        'direct': job_options.get('direct', 'N/A'),
-                        'numjobs': job_options.get('numjobs', 'N/A'),
-                        'iodepth': job_options.get('iodepth', 'N/A')
-                    }
-    except Exception as e:
-        print(f"Error extracting FIO parameters: {e}")
-    
-    return {}
 
-def create_graphs_from_job_summaries():
+def create_graphs_from_job_summaries(output_dir='.', graph_type='bar'):
     """Create graphs from block size + operation job summary CSV files."""
     try:
         import matplotlib.pyplot as plt
@@ -399,91 +555,138 @@ def create_graphs_from_job_summaries():
         plt.switch_backend('Agg')
         
         # Find all job summary CSV files
-        job_summary_files = glob.glob("all_machines_block_size_*_operation_*_job_summary.csv")
+        job_summary_files = glob.glob(os.path.join(output_dir, "all_machines_block_size_*_operation_*_job_summary.csv"))
         
         if not job_summary_files:
             print("No block size + operation job summary files found to create graphs from.")
             return
         
-        print(f"\nCreating graphs from {len(job_summary_files)} block size + operation job summary files...")
+        print(f"\nCreating {graph_type} graphs from {len(job_summary_files)} block size + operation job summary files...")
         
-        for csv_file in job_summary_files:
-            try:
-                # Read the CSV file
-                df = pd.read_csv(csv_file)
-                
-                # Skip if file doesn't have the expected columns
-                if 'Machine' not in df.columns or 'TotalBwMean' not in df.columns:
-                    print(f"Skipping {csv_file}: Missing required columns")
+        if graph_type == 'both':
+            # Generate both bar and line graphs
+            for graph_subtype in ['bar', 'line']:
+                print(f"Creating {graph_subtype} graphs...")
+                for csv_file in job_summary_files:
+                    try:
+                        create_single_graph(csv_file, graph_subtype, output_dir)
+                    except Exception as e:
+                        print(f"Error creating {graph_subtype} graph for {csv_file}: {e}")
+                        continue
+        else:
+            # Generate single graph type
+            for csv_file in job_summary_files:
+                try:
+                    create_single_graph(csv_file, graph_type, output_dir)
+                except Exception as e:
+                    print(f"Error creating {graph_type} graph for {csv_file}: {e}")
                     continue
-                
-                # Create the plot
-                plt.figure(figsize=(10, 6))
-                
-                # Create bar chart
-                machines = df['Machine'].tolist()
-                total_bw = df['TotalBwMean'].tolist()
-                
-                bars = plt.bar(machines, total_bw, color='skyblue', edgecolor='navy', alpha=0.7)
-
-                # Remove X-axis labels completely
-                plt.xticks(range(len(machines)), [])
-                
-                # Customize the plot
-                plt.ylabel('Total bw_mean per machine [KB]', fontsize=10, fontweight='bold')
-                plt.xlabel('Test machines', fontsize=10, fontweight='bold')
-                
-                # Extract block size and operation from filename for title
-                if 'block_size_' in csv_file and '_operation_' in csv_file:
-                    # Extract from filename like: all_machines_block_size_4k_operation_read_job_summary.csv
-                    parts = csv_file.replace('_job_summary.csv', '').split('_')
-                    if len(parts) >= 7:
-                        block_size = parts[4]  # 128k
-                        operation = parts[6]   # read
-                        title = f"size_{block_size}_operation_{operation}"
-                    else:
-                        title = csv_file.replace('_job_summary.csv', '')
-                else:
-                    # For per-machine files like: vm-1_bw_mean_job_summary.csv
-                    title = csv_file.replace('_bw_mean_job_summary.csv', '')
-                
-                # Extract FIO parameters and create subtitle
-                fio_params = extract_fio_params_from_csv_filename(csv_file)
-                if fio_params:
-                    subtitle = f"size={fio_params.get('size', 'N/A')}, bs={fio_params.get('bs', 'N/A')}, runtime={fio_params.get('runtime', 'N/A')}s, direct={fio_params.get('direct', 'N/A')}, numjobs={fio_params.get('numjobs', 'N/A')}, iodepth={fio_params.get('iodepth', 'N/A')}"
-                    plt.suptitle(title, fontsize=14, fontweight='bold')
-                    plt.title(subtitle, fontsize=10, style='italic')
-                else:
-                    plt.title(title, fontsize=14, fontweight='bold')
-
-                # Set axis limits to include zero
-                plt.xlim(-0.5, len(machines) - 0.5)
-                plt.ylim(0, max(total_bw) * 1.1)
-                
-                # Customize grid and layout
-                plt.grid(True, alpha=0.3, axis='y')
-                plt.tight_layout()
-                
-                # Create output filename
-                output_file = csv_file.replace('.csv', '.png')
-                
-                # Save the plot
-                plt.savefig(output_file, dpi=300, bbox_inches='tight')
-                plt.close()
-                
-                print(f"Created graph: {output_file}")
-                
-            except Exception as e:
-                print(f"Error creating graph for {csv_file}: {e}")
-                continue
         
-        print(f"\nGraph creation complete! Created {len(job_summary_files)} graphs.")
+        print(f"\nGraph creation complete! Created {graph_type} graphs.")
         
     except ImportError as e:
         print(f"Error importing required libraries: {e}")
         print("Please install required dependencies: pip install matplotlib pandas")
     except Exception as e:
         print(f"Error in graph creation: {e}")
+
+
+def create_single_graph(csv_file, graph_type, output_dir):
+    """Create a single graph from a CSV file."""
+    try:
+        # Read the CSV file
+        df = pd.read_csv(csv_file)
+        
+        # Skip if file doesn't have the expected columns
+        if 'Machine' not in df.columns or 'TotalBwMean' not in df.columns:
+            print(f"Skipping {csv_file}: Missing required columns")
+            return
+        
+        # Create the plot
+        plt.figure(figsize=(10, 6))
+        
+        # Create numeric x-axis positions for all data points
+        machines = df['Machine'].tolist()
+        total_bw = df['TotalBwMean'].tolist()
+        all_positions = range(len(machines))
+        
+        if graph_type == 'bar':
+            # Create bar chart
+            bars = plt.bar(all_positions, total_bw, color='skyblue', edgecolor='navy', alpha=0.7)
+        else:  # line graph
+            # Create line plot
+            plt.plot(all_positions, total_bw, 
+                    marker='o', linewidth=3, markersize=8, 
+                    color='steelblue', markerfacecolor='lightblue', 
+                    markeredgecolor='navy', markeredgewidth=2)
+
+        # Remove X-axis labels completely
+        plt.xticks(all_positions, [])
+        
+        # Customize the plot
+        plt.ylabel('Total bw_mean per machine [KB]', fontsize=10, fontweight='bold')
+        plt.xlabel('Test machines', fontsize=10, fontweight='bold')
+        
+        # Extract block size and operation from filename for title
+        if 'block_size_' in csv_file and '_operation_' in csv_file:
+            # Extract from filename like: all_machines_block_size_4k_operation_read_job_summary.csv
+            filename = os.path.basename(csv_file)
+            parts = filename.replace('_job_summary.csv', '').split('_')
+            if len(parts) >= 7:
+                block_size = parts[4]  # 4k
+                operation = parts[6]   # read
+                
+                # Get FIO configuration for subtitle
+                config_key = (operation, block_size)
+                subtitle = ""
+                if config_key in FIO_CONFIGS:
+                    subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
+                
+                # Customize the plot
+                num_vms = len(df)
+                chart_type = "Bar Chart" if graph_type == 'bar' else "Line Chart"
+                plt.title(f'Bandwidth Performance ({chart_type}): {operation.upper()} - {block_size.upper()} Block Size ({num_vms} VMs)', 
+                         fontsize=16, fontweight='bold', pad=20)
+                
+                # Add subtitle with FIO configuration
+                if subtitle:
+                    plt.suptitle(subtitle, fontsize=10, y=0.88, ha='center', va='top')
+            else:
+                plt.title(csv_file.replace('_job_summary.csv', ''), fontsize=14, fontweight='bold')
+        else:
+            # For per-machine files like: vm-1_bw_mean_job_summary.csv
+            plt.title(csv_file.replace('_bw_mean_job_summary.csv', ''), fontsize=14, fontweight='bold')
+
+        # Set axis limits to include zero
+        plt.xlim(-0.5, len(machines) - 0.5)
+        plt.ylim(0, max(total_bw) * 1.1)
+        
+        # Customize grid and layout
+        if graph_type == 'bar':
+            plt.grid(axis='y', alpha=0.3, linestyle='--')
+        else:  # line graph
+            plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+        plt.tight_layout()
+        
+        # Create output filename
+        csv_basename = os.path.basename(csv_file)
+        if graph_type == 'bar':
+            output_filename = csv_basename.replace('.csv', '.png')
+        else:  # line graph
+            output_filename = csv_basename.replace('.csv', f'_{graph_type}.png')
+        output_file = os.path.join(output_dir, output_filename)
+        
+        # Save the plot
+        plt.savefig(output_file, dpi=300, bbox_inches='tight', 
+                   facecolor='white', edgecolor='none')
+        plt.close()
+        
+        print(f"Created {graph_type} graph: {output_file}")
+        return True
+        
+    except Exception as e:
+        print(f"Error creating {graph_type} graph for {csv_file}: {e}")
+        return False
 
 
 if __name__ == "__main__":

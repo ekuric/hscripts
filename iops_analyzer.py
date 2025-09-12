@@ -4,7 +4,7 @@ Comprehensive IOPS Analysis Tool
 ===============================
 
 This script combines all IOPS analysis functionality:
-1. Extract IOPS data from FIO JSON files in vm-* directories
+1. Extract IOPS data from FIO JSON files in any subdirectories
 2. Generate CSV files with integer IOPS values
 3. Create PNG graphs (bar charts, line graphs, or both)
 4. Support for all operation types: read, write, randread, randwrite
@@ -196,7 +196,7 @@ def process_vm_directory(vm_dir):
     
     return results
 
-def write_csv_files(all_results):
+def write_csv_files(all_results, results_dir='.'):
     """
     Write separate CSV files for each operation and block size combination.
     """
@@ -212,8 +212,9 @@ def write_csv_files(all_results):
     # Write separate CSV files
     for (operation, block_size), data in grouped_results.items():
         filename = f"summary-{operation}-{block_size}.csv"
+        filepath = os.path.join(results_dir, filename)
         
-        with open(filename, 'w', newline='') as csvfile:
+        with open(filepath, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
             
             # Write header
@@ -226,7 +227,7 @@ def write_csv_files(all_results):
             for vm_name, iops in data:
                 writer.writerow([vm_name, iops])
         
-        print(f"Created {filename} with {len(data)} records")
+        print(f"Created {filepath} with {len(data)} records")
     
     return len(grouped_results)
 
@@ -244,7 +245,7 @@ def get_block_size_display_name(block_size):
     }
     return block_size_map.get(block_size.lower(), block_size.upper())
 
-def write_operation_summary_csv_files(all_results, selected_block_sizes=None):
+def write_operation_summary_csv_files(all_results, selected_block_sizes=None, results_dir='.'):
     """
     Write CSV files that combine all block sizes for each operation type.
     Creates files like: summary-write-all-blocks.csv, summary-read-all-blocks.csv, etc.
@@ -264,6 +265,7 @@ def write_operation_summary_csv_files(all_results, selected_block_sizes=None):
     
     for operation, vm_data in operation_results.items():
         filename = f"summary-{operation}-all-blocks.csv"
+        filepath = os.path.join(results_dir, filename)
         
         # Get all unique block sizes for this operation
         all_block_sizes = set()
@@ -278,7 +280,7 @@ def write_operation_summary_csv_files(all_results, selected_block_sizes=None):
                 print(f"No selected block sizes found for operation {operation}, skipping...")
                 continue
         
-        with open(filename, 'w', newline='') as csvfile:
+        with open(filepath, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
             
             # Write header: vm_name, block_size_1, block_size_2, ...
@@ -297,8 +299,8 @@ def write_operation_summary_csv_files(all_results, selected_block_sizes=None):
                 writer.writerow(row)
         
         display_names = [get_block_size_display_name(bs) for bs in all_block_sizes]
-        print(f"Created {filename} with {len(sorted_vms)} VMs and {len(all_block_sizes)} block sizes: {', '.join(display_names)}")
-        csv_files_created.append(filename)
+        print(f"Created {filepath} with {len(sorted_vms)} VMs and {len(all_block_sizes)} block sizes: {', '.join(display_names)}")
+        csv_files_created.append(filepath)
     
     return csv_files_created
 
@@ -332,7 +334,7 @@ def get_x_axis_labels_and_positions(df_sorted):
         x_labels = [f'VM {i+1}' for i in x_positions]
         return x_positions, x_labels
 
-def create_bar_graph(csv_file):
+def create_bar_graph(csv_file, results_dir='.'):
     """
     Create a PNG bar graph from a CSV file.
     """
@@ -396,10 +398,12 @@ def create_bar_graph(csv_file):
         plt.tight_layout()
         
         # Generate PNG filename
-        png_filename = csv_file.replace('.csv', '_bar.png')
+        csv_basename = os.path.basename(csv_file)
+        png_filename = csv_basename.replace('.csv', '_bar.png')
+        png_filepath = os.path.join(results_dir, png_filename)
         
         # Save the plot
-        plt.savefig(png_filename, dpi=300, bbox_inches='tight', 
+        plt.savefig(png_filepath, dpi=300, bbox_inches='tight', 
                    facecolor='white', edgecolor='none')
         plt.close()  # Close the figure to free memory
         
@@ -410,7 +414,7 @@ def create_bar_graph(csv_file):
         print(f"Error creating bar graph for {csv_file}: {e}")
         return False
 
-def create_line_graph(csv_file):
+def create_line_graph(csv_file, results_dir='.'):
     """
     Create a PNG line graph from a CSV file.
     """
@@ -483,10 +487,12 @@ def create_line_graph(csv_file):
         plt.tight_layout()
         
         # Generate PNG filename with line-chart suffix
-        png_filename = csv_file.replace('.csv', '_line-chart.png')
+        csv_basename = os.path.basename(csv_file)
+        png_filename = csv_basename.replace('.csv', '_line-chart.png')
+        png_filepath = os.path.join(results_dir, png_filename)
         
         # Save the plot
-        plt.savefig(png_filename, dpi=300, bbox_inches='tight', 
+        plt.savefig(png_filepath, dpi=300, bbox_inches='tight', 
                    facecolor='white', edgecolor='none')
         plt.close()  # Close the figure to free memory
         
@@ -497,7 +503,7 @@ def create_line_graph(csv_file):
         print(f"Error creating line graph for {csv_file}: {e}")
         return False
 
-def create_simple_graphs(csv_file, graph_type):
+def create_simple_graphs(csv_file, graph_type, results_dir='.'):
     """
     Create simple graphs without suffixes (for backward compatibility).
     """
@@ -590,10 +596,12 @@ def create_simple_graphs(csv_file, graph_type):
         plt.tight_layout()
         
         # Generate PNG filename (same as CSV but with .png extension)
-        png_filename = csv_file.replace('.csv', '.png')
+        csv_basename = os.path.basename(csv_file)
+        png_filename = csv_basename.replace('.csv', '.png')
+        png_filepath = os.path.join(results_dir, png_filename)
         
         # Save the plot
-        plt.savefig(png_filename, dpi=300, bbox_inches='tight', 
+        plt.savefig(png_filepath, dpi=300, bbox_inches='tight', 
                    facecolor='white', edgecolor='none')
         plt.close()  # Close the figure to free memory
         
@@ -604,7 +612,7 @@ def create_simple_graphs(csv_file, graph_type):
         print(f"Error creating {graph_type} graph for {csv_file}: {e}")
         return False
 
-def create_operation_summary_graphs(csv_files, graph_type='bar'):
+def create_operation_summary_graphs(csv_files, graph_type='bar', results_dir='.'):
     """
     Create graphs for operation summary CSV files (all block sizes combined).
     Supports both bar and line graphs.
@@ -712,10 +720,12 @@ def create_operation_summary_graphs(csv_files, graph_type='bar'):
             # Generate PNG filename with block sizes and graph type included
             block_sizes_str = '-'.join(block_sizes)
             graph_suffix = 'bar' if graph_type == 'bar' else 'line'
-            png_filename = csv_file.replace('.csv', f'_comparison-{block_sizes_str}_{graph_suffix}.png')
+            csv_basename = os.path.basename(csv_file)
+            png_filename = csv_basename.replace('.csv', f'_comparison-{block_sizes_str}_{graph_suffix}.png')
+            png_filepath = os.path.join(results_dir, png_filename)
             
             # Save the plot
-            plt.savefig(png_filename, dpi=300, bbox_inches='tight', 
+            plt.savefig(png_filepath, dpi=300, bbox_inches='tight', 
                        facecolor='white', edgecolor='none')
             plt.close()  # Close the figure to free memory
             
@@ -727,7 +737,7 @@ def create_operation_summary_graphs(csv_files, graph_type='bar'):
     
     return success_count
 
-def generate_graphs(csv_files, graph_type):
+def generate_graphs(csv_files, graph_type, results_dir='.'):
     """
     Generate graphs based on the specified type.
     """
@@ -740,14 +750,14 @@ def generate_graphs(csv_files, graph_type):
     if graph_type == 'both':
         # Generate both bar and line graphs with suffixes
         for csv_file in csv_files:
-            if create_bar_graph(csv_file):
+            if create_bar_graph(csv_file, results_dir):
                 success_count += 1
-            if create_line_graph(csv_file):
+            if create_line_graph(csv_file, results_dir):
                 success_count += 1
     else:
         # Generate simple graphs without suffixes
         for csv_file in csv_files:
-            if create_simple_graphs(csv_file, graph_type):
+            if create_simple_graphs(csv_file, graph_type, results_dir):
                 success_count += 1
     
     return success_count
@@ -766,6 +776,8 @@ Examples:
   python3 iops_analyzer.py --graphs both                      # Generate both types
   python3 iops_analyzer.py --operation-summary                # Generate operation summary
   python3 iops_analyzer.py --operation-summary --block-sizes 4k,8k,128k  # Select specific block sizes
+  python3 iops_analyzer.py --results /path/to/results         # Save results to specific directory
+  python3 iops_analyzer.py --input-dir /path/to/fio/data      # Analyze FIO data from specific directory
         """
     )
     
@@ -782,24 +794,59 @@ Examples:
                        type=str,
                        help='Comma-separated list of block sizes to include in operation summary (e.g., "4k,8k,128k")')
     
+    parser.add_argument('--results',
+                       type=str,
+                       default='.',
+                       help='Directory to save results (CSV and PNG files). Default: current directory')
+    
+    parser.add_argument('--input-dir',
+                       type=str,
+                       default='.',
+                       help='Directory containing FIO JSON files in subdirectories (any name). Default: current directory')
+    
     args = parser.parse_args()
     
     print("=" * 60)
     print("COMPREHENSIVE IOPS ANALYSIS TOOL")
     print("=" * 60)
     
-    # Get the current directory
-    current_dir = os.getcwd()
+    # Create results directory if it doesn't exist
+    results_dir = os.path.abspath(args.results)
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+        print(f"Created results directory: {results_dir}")
+    else:
+        print(f"Using results directory: {results_dir}")
     
-    # Find all vm-* directories
-    vm_dirs = glob.glob(os.path.join(current_dir, "vm-*"))
-    vm_dirs.sort()  # Sort to ensure consistent order
-    
-    if not vm_dirs:
-        print("No vm-* directories found!")
+    # Get the input directory
+    input_dir = os.path.abspath(args.input_dir)
+    if not os.path.exists(input_dir):
+        print(f"Error: Input directory does not exist: {input_dir}")
         return
     
-    print(f"Found {len(vm_dirs)} vm-* directories")
+    print(f"Using input directory: {input_dir}")
+    
+    # Find all directories containing FIO JSON files
+    test_dirs = []
+    for item in os.listdir(input_dir):
+        item_path = os.path.join(input_dir, item)
+        if os.path.isdir(item_path):
+            # Check if this directory contains FIO JSON files
+            json_files = glob.glob(os.path.join(item_path, "*.json"))
+            if json_files:
+                test_dirs.append(item_path)
+    
+    test_dirs.sort()  # Sort to ensure consistent order
+    
+    if not test_dirs:
+        print("No directories containing FIO JSON files found!")
+        return
+    
+    print(f"Found {len(test_dirs)} directories with FIO JSON files:")
+    for test_dir in test_dirs:
+        dir_name = os.path.basename(test_dir)
+        json_count = len(glob.glob(os.path.join(test_dir, "*.json")))
+        print(f"  - {dir_name} ({json_count} JSON files)")
     
     # Step 1: Extract IOPS data from JSON files
     print(f"\nStep 1: Extracting IOPS data from JSON files...")
@@ -807,13 +854,14 @@ Examples:
     
     # Process all directories
     all_results = {}
-    for vm_dir in vm_dirs:
-        print(f"Processing {vm_dir}...")
-        results = process_vm_directory(vm_dir)
+    for test_dir in test_dirs:
+        dir_name = os.path.basename(test_dir)
+        print(f"Processing {dir_name}...")
+        results = process_vm_directory(test_dir)
         all_results.update(results)
     
     # Write CSV files
-    csv_count = write_csv_files(all_results)
+    csv_count = write_csv_files(all_results, results_dir)
     
     print(f"\nTotal records processed: {len(all_results)}")
     
@@ -836,7 +884,7 @@ Examples:
     if args.operation_summary:
         print(f"\nStep 2: Generating operation summary files...")
         print("-" * 50)
-        operation_summary_files = write_operation_summary_csv_files(all_results, selected_block_sizes)
+        operation_summary_files = write_operation_summary_csv_files(all_results, selected_block_sizes, results_dir)
     
     # Step 3: Generate graphs
     if args.graphs != 'none':
@@ -844,18 +892,18 @@ Examples:
         print(f"\nStep {step_num}: Generating {args.graphs} graphs...")
         print("-" * 50)
         
-        # Find all CSV files
-        csv_files = glob.glob("summary-*.csv")
+        # Find all CSV files in results directory
+        csv_files = glob.glob(os.path.join(results_dir, "summary-*.csv"))
         
         if csv_files:
-            success_count = generate_graphs(csv_files, args.graphs)
+            success_count = generate_graphs(csv_files, args.graphs, results_dir)
             print(f"\nSuccessfully created {success_count} graphs")
             
             # List generated PNG files
             if args.graphs == 'both':
-                png_files = glob.glob("summary-*_bar.png") + glob.glob("summary-*_line-chart.png")
+                png_files = glob.glob(os.path.join(results_dir, "summary-*_bar.png")) + glob.glob(os.path.join(results_dir, "summary-*_line-chart.png"))
             else:
-                png_files = glob.glob("summary-*.png")
+                png_files = glob.glob(os.path.join(results_dir, "summary-*.png"))
             
             if png_files:
                 print(f"\nGenerated PNG files:")
@@ -870,11 +918,11 @@ Examples:
         print(f"\nStep {step_num}: Generating operation summary graphs...")
         print("-" * 50)
         
-        summary_success_count = create_operation_summary_graphs(operation_summary_files)
+        summary_success_count = create_operation_summary_graphs(operation_summary_files, 'bar', results_dir)
         print(f"\nSuccessfully created {summary_success_count} operation summary graphs")
         
         # List generated operation summary PNG files
-        summary_png_files = glob.glob("summary-*-all-blocks_comparison-*.png")
+        summary_png_files = glob.glob(os.path.join(results_dir, "summary-*-all-blocks_comparison-*.png"))
         if summary_png_files:
             print(f"\nGenerated operation summary PNG files:")
             for png_file in sorted(summary_png_files):
@@ -885,8 +933,8 @@ Examples:
     print("=" * 60)
     
     # Final summary
-    csv_files = [f for f in os.listdir('.') if f.startswith('summary-') and f.endswith('.csv')]
-    png_files = [f for f in os.listdir('.') if f.startswith('summary-') and f.endswith('.png')]
+    csv_files = [f for f in os.listdir(results_dir) if f.startswith('summary-') and f.endswith('.csv')]
+    png_files = [f for f in os.listdir(results_dir) if f.startswith('summary-') and f.endswith('.png')]
     
     print(f"Generated {len(csv_files)} CSV files")
     if args.graphs != 'none' or args.operation_summary:
