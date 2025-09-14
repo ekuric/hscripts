@@ -383,7 +383,7 @@ def create_bar_graph(csv_file, results_dir='.'):
         
         # Add subtitle with FIO configuration
         if subtitle:
-            plt.suptitle(subtitle, fontsize=10, y=0.91, ha='center', va='top')
+            plt.suptitle(subtitle, fontsize=10, y=0.93, ha='center', va='top')
         
         plt.xlabel('VM Index', fontsize=12, fontweight='bold')
         plt.ylabel('IOPS', fontsize=12, fontweight='bold')
@@ -465,7 +465,7 @@ def create_line_graph(csv_file, results_dir='.'):
         
         # Add subtitle with FIO configuration
         if subtitle:
-            plt.suptitle(subtitle, fontsize=10, ha='center',y=0.91, va='top')
+            plt.suptitle(subtitle, fontsize=10, ha='center',y=0.93, va='top')
         
         plt.xlabel('VM Index', fontsize=12, fontweight='bold')
         plt.ylabel('IOPS', fontsize=12, fontweight='bold')
@@ -584,7 +584,7 @@ def create_simple_graphs(csv_file, graph_type, results_dir='.'):
         # Add subtitle with FIO configuration
         # y=0.91 is the best position for the subtitle - it is not cut off and it is not too high 
         if subtitle:
-            plt.suptitle(subtitle, fontsize=10, y=0.91, ha='center', va='top')
+            plt.suptitle(subtitle, fontsize=10, y=0.93, ha='center', va='top')
         
         plt.xlabel('VM Index', fontsize=12, fontweight='bold')
         plt.ylabel('IOPS', fontsize=12, fontweight='bold')
@@ -623,117 +623,143 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', results_dir='.'
     
     success_count = 0
     
+    # Handle 'both' option by creating both bar and line graphs
+    graph_types = ['bar', 'line'] if graph_type == 'both' else [graph_type]
+    
     for csv_file in csv_files:
-        try:
-            # Read CSV file
-            df = pd.read_csv(csv_file)
-            
-            # Extract operation from filename
-            filename = os.path.basename(csv_file)
-            match = re.search(r'summary-(\w+)-all-blocks\.csv', filename)
-            if not match:
-                continue
-            operation = match.group(1)
-            
-            # Get block sizes (all columns except vm_name)
-            block_sizes = [col for col in df.columns if col != 'vm_name']
-            
-            # Create the plot
-            plt.figure(figsize=(14, 10))
-            
-            # Sort by vm_name for consistent ordering
-            df_sorted = df.sort_values('vm_name')
-            
-            # Get X-axis labels and positions based on number of VMs
-            x_positions, x_labels = get_x_axis_labels_and_positions(df_sorted)
-            
-            # Create numeric x-axis positions for all data points
-            all_positions = range(len(df_sorted))
-            
-            # Create plot based on graph type
-            colors = plt.cm.Set3(np.linspace(0, 1, len(block_sizes)))
-            
-            if graph_type == 'bar':
-                # Create bar plot for each block size
-                width = 0.8 / len(block_sizes)  # Width of each bar group
+        for current_graph_type in graph_types:
+            try:
+                # Read CSV file
+                df = pd.read_csv(csv_file)
                 
+                # Extract operation from filename
+                filename = os.path.basename(csv_file)
+                match = re.search(r'summary-(\w+)-all-blocks\.csv', filename)
+                if not match:
+                    continue
+                operation = match.group(1)
+                
+                # Get block sizes (all columns except vm_name)
+                block_sizes = [col for col in df.columns if col != 'vm_name']
+                
+                # Create the plot
+                plt.figure(figsize=(14, 10))
+                
+                # Sort by vm_name for consistent ordering
+                df_sorted = df.sort_values('vm_name')
+                
+                # Get X-axis labels and positions based on number of VMs
+                x_positions, x_labels = get_x_axis_labels_and_positions(df_sorted)
+                
+                # Create numeric x-axis positions for all data points
+                all_positions = range(len(df_sorted))
+                
+                # Create plot based on graph type
+                colors = plt.cm.Set3(np.linspace(0, 1, len(block_sizes)))
+                
+                if current_graph_type == 'bar':
+                    # Create bar plot for each block size
+                    width = 0.8 / len(block_sizes)  # Width of each bar group
+                    
+                    for i, block_size in enumerate(block_sizes):
+                        offset = (i - len(block_sizes)/2 + 0.5) * width
+                        display_name = get_block_size_display_name(block_size)
+                        bars = plt.bar([pos + offset for pos in all_positions], 
+                                      df_sorted[block_size], 
+                                      width=width, 
+                                      label=display_name,
+                                      color=colors[i], 
+                                      alpha=0.8,
+                                      edgecolor='black',
+                                      linewidth=0.5)
+                else:  # line graph
+                    # Create line plot for each block size
+                    for i, block_size in enumerate(block_sizes):
+                        display_name = get_block_size_display_name(block_size)
+                        plt.plot(all_positions, df_sorted[block_size], 
+                                marker='o', linewidth=2, markersize=6,
+                                label=display_name,
+                                color=colors[i], 
+                                markerfacecolor=colors[i],
+                                markeredgecolor='black',
+                                markeredgewidth=1)
+            
+                # Get FIO configuration for subtitle (use first block size as reference)
+                subtitle = ""
+                if block_sizes:
+                    # Use the first block size to get FIO config for subtitle
+                    first_block_size = block_sizes[0]
+                    config_key = (operation, first_block_size)
+                    if config_key in FIO_CONFIGS:
+                        subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
+            
+                # Customize the plot
+                num_vms = len(df_sorted)
+                chart_type = "Bar Chart" if current_graph_type == 'bar' else "Line Chart"
+                plt.title(f'IOPS Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
+                         fontsize=16, fontweight='bold', pad=20)
+            
+                # Add subtitle with FIO configuration
+                if subtitle:
+                    plt.suptitle(subtitle, fontsize=10, y=0.93, ha='center', va='top')
+                
+                plt.xlabel('VM Index', fontsize=12, fontweight='bold')
+                plt.ylabel('IOPS', fontsize=12, fontweight='bold')
+                
+                # Set x-axis ticks based on visibility rules
+                plt.xticks(x_positions, x_labels, rotation=45, ha='right')
+                
+                # Calculate and display average for each individual block size
                 for i, block_size in enumerate(block_sizes):
-                    offset = (i - len(block_sizes)/2 + 0.5) * width
-                    display_name = get_block_size_display_name(block_size)
-                    bars = plt.bar([pos + offset for pos in all_positions], 
-                                  df_sorted[block_size], 
-                                  width=width, 
-                                  label=display_name,
-                                  color=colors[i], 
-                                  alpha=0.8,
-                                  edgecolor='black',
-                                  linewidth=0.5)
-            else:  # line graph
-                # Create line plot for each block size
+                    block_data = df_sorted[block_size]
+                    # Calculate average for this specific block size
+                    block_average = block_data.mean()
+                    
+                    # Add horizontal line for this block size's average
+                    plt.axhline(y=block_average, color=colors[i], linestyle='--', linewidth=2, alpha=0.7)
+                
+                # Add legend on the right side of the graph
+                plt.legend(title='Block Size', bbox_to_anchor=(1.02, 0.5), loc='center left')
+                
+                # Add average value text boxes below the legend
                 for i, block_size in enumerate(block_sizes):
+                    block_data = df_sorted[block_size]
+                    block_average = block_data.mean()
                     display_name = get_block_size_display_name(block_size)
-                    plt.plot(all_positions, df_sorted[block_size], 
-                            marker='o', linewidth=2, markersize=6,
-                            label=display_name,
-                            color=colors[i], 
-                            markerfacecolor=colors[i],
-                            markeredgecolor='black',
-                            markeredgewidth=1)
-            
-            # Get FIO configuration for subtitle (use first block size as reference)
-            subtitle = ""
-            if block_sizes:
-                # Use the first block size to get FIO config for subtitle
-                first_block_size = block_sizes[0]
-                config_key = (operation, first_block_size)
-                if config_key in FIO_CONFIGS:
-                    subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
-            
-            # Customize the plot
-            num_vms = len(df_sorted)
-            chart_type = "Bar Chart" if graph_type == 'bar' else "Line Chart"
-            plt.title(f'IOPS Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
-                     fontsize=16, fontweight='bold', pad=20)
-            
-            # Add subtitle with FIO configuration
-            if subtitle:
-                plt.suptitle(subtitle, fontsize=10, y=0.91, ha='center', va='top')
-            
-            plt.xlabel('VM Index', fontsize=12, fontweight='bold')
-            plt.ylabel('IOPS', fontsize=12, fontweight='bold')
-            
-            # Set x-axis ticks based on visibility rules
-            plt.xticks(x_positions, x_labels, rotation=45, ha='right')
-            
-            # Add legend with better block size names
-            plt.legend(title='Block Size', bbox_to_anchor=(1.05, 1), loc='upper left')
-            
-            # Add grid for better readability
-            if graph_type == 'bar':
-                plt.grid(axis='y', alpha=0.3, linestyle='--')
-            else:  # line graph
-                plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
-            
-            # Adjust layout to prevent label cutoff
-            plt.tight_layout()
-            
-            # Generate PNG filename with block sizes and graph type included
-            block_sizes_str = '-'.join(block_sizes)
-            graph_suffix = 'bar' if graph_type == 'bar' else 'line'
-            csv_basename = os.path.basename(csv_file)
-            png_filename = csv_basename.replace('.csv', f'_comparison-{block_sizes_str}_{graph_suffix}.png')
-            png_filepath = os.path.join(results_dir, png_filename)
-            
-            # Save the plot
-            plt.savefig(png_filepath, dpi=300, bbox_inches='tight', 
-                       facecolor='white', edgecolor='none')
-            plt.close()  # Close the figure to free memory
-            
-            print(f"Created operation summary graph: {png_filename}")
-            success_count += 1
-            
-        except Exception as e:
-            print(f"Error creating operation summary graph for {csv_file}: {e}")
+                    
+                    # Position text boxes below the legend (right side)
+                    plt.text(1.02, 0.3 - (i * 0.08), f'{display_name} Avg: {block_average:.0f} IOPS', 
+                            transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
+                            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                            color=colors[i])
+                
+                # Add grid for better readability
+                if current_graph_type == 'bar':
+                    plt.grid(axis='y', alpha=0.3, linestyle='--')
+                else:  # line graph
+                    plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+                
+                # Adjust layout to accommodate legend and text boxes on the right
+                plt.tight_layout()
+                plt.subplots_adjust(right=0.75)  # Make room for legend and text boxes
+                
+                # Generate PNG filename with block sizes and graph type included
+                block_sizes_str = '-'.join(block_sizes)
+                csv_basename = os.path.basename(csv_file)
+                graph_suffix = 'bar' if current_graph_type == 'bar' else 'line'
+                png_filename = csv_basename.replace('.csv', f'_comparison-{block_sizes_str}_average_{graph_suffix}.png')
+                png_filepath = os.path.join(results_dir, png_filename)
+                
+                # Save the plot
+                plt.savefig(png_filepath, dpi=300, bbox_inches='tight', 
+                           facecolor='white', edgecolor='none')
+                plt.close()  # Close the figure to free memory
+                
+                print(f"Created operation summary graph: {png_filename}")
+                success_count += 1
+                
+            except Exception as e:
+                print(f"Error creating operation summary graph for {csv_file}: {e}")
     
     return success_count
 
@@ -918,7 +944,7 @@ Examples:
         print(f"\nStep {step_num}: Generating operation summary graphs...")
         print("-" * 50)
         
-        summary_success_count = create_operation_summary_graphs(operation_summary_files, 'bar', results_dir)
+        summary_success_count = create_operation_summary_graphs(operation_summary_files, args.graphs, results_dir)
         print(f"\nSuccessfully created {summary_success_count} operation summary graphs")
         
         # List generated operation summary PNG files

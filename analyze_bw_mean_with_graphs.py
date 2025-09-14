@@ -12,6 +12,7 @@ import glob
 import re
 import argparse
 import sys
+import csv
 from collections import defaultdict
 from pathlib import Path
 
@@ -318,6 +319,71 @@ def filter_results_by_block_sizes(results, all_machines_results, selected_block_
     
     return filtered_results, filtered_all_machines_results
 
+def write_operation_summary_csv_files(all_machines_results, selected_block_sizes=None, output_dir='.'):
+    """
+    Write CSV files that combine all block sizes for each operation type.
+    Creates files like: summary-write-all-blocks.csv, summary-read-all-blocks.csv, etc.
+    """
+    # Group results by operation only (combining all block sizes)
+    operation_results = {}
+    
+    for operation, block_data in all_machines_results.items():
+        if operation not in operation_results:
+            operation_results[operation] = {}
+        
+        for block_size, items in block_data.items():
+            for item in items:
+                vm_name = item['machine']
+                bw_mean = item['bw_mean']
+                
+                if vm_name not in operation_results[operation]:
+                    operation_results[operation][vm_name] = {}
+                operation_results[operation][vm_name][block_size] = bw_mean
+    
+    # Write CSV files for each operation
+    csv_files_created = []
+    
+    for operation, vm_data in operation_results.items():
+        filename = f"summary-{operation}-all-blocks.csv"
+        filepath = os.path.join(output_dir, filename)
+        
+        # Get all unique block sizes for this operation
+        all_block_sizes = set()
+        for vm_name, block_data in vm_data.items():
+            all_block_sizes.update(block_data.keys())
+        all_block_sizes = sorted(all_block_sizes)
+        
+        # Filter block sizes if selection is specified
+        if selected_block_sizes:
+            all_block_sizes = [bs for bs in all_block_sizes if bs in selected_block_sizes]
+            if not all_block_sizes:
+                print(f"No selected block sizes found for operation {operation}, skipping...")
+                continue
+        
+        with open(filepath, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            
+            # Write header: vm_name, block_size_1, block_size_2, ...
+            header = ['vm_name'] + all_block_sizes
+            writer.writerow(header)
+            
+            # Sort by vm_name for consistent output
+            sorted_vms = sorted(vm_data.keys())
+            
+            # Write data
+            for vm_name in sorted_vms:
+                row = [vm_name]
+                for block_size in all_block_sizes:
+                    bw_value = vm_data[vm_name].get(block_size, 0)  # 0 if not found
+                    row.append(bw_value)
+                writer.writerow(row)
+        
+        display_names = [get_block_size_display_name(bs) for bs in all_block_sizes]
+        print(f"Created {filepath} with {len(sorted_vms)} VMs and {len(all_block_sizes)} block sizes: {', '.join(display_names)}")
+        csv_files_created.append(filepath)
+    
+    return csv_files_created
+
 def save_results_to_files(results, all_machines_results, output_dir='.', selected_block_sizes=None):
     """Save results to CSV files for further analysis."""
     
@@ -466,7 +532,8 @@ Examples:
   python3 analyze_bw_mean_with_graphs.py --graph-type line  # Generate line graphs
   python3 analyze_bw_mean_with_graphs.py --graph-type both  # Generate both bar and line graphs
   python3 analyze_bw_mean_with_graphs.py --block-sizes 4k,8k,128k  # Analyze specific block sizes
-  python3 analyze_bw_mean_with_graphs.py --input-dir /data --output-dir /results --graph-type line --block-sizes 4k,8k  # All options
+  python3 analyze_bw_mean_with_graphs.py --operation-summary  # Generate operation summary graphs
+  python3 analyze_bw_mean_with_graphs.py --input-dir /data --output-dir /results --graph-type line --block-sizes 4k,8k --operation-summary  # All options
         """
     )
     
@@ -488,6 +555,10 @@ Examples:
     parser.add_argument('--block-sizes',
                        type=str,
                        help='Comma-separated list of block sizes to analyze (e.g., "4k,8k,128k")')
+    
+    parser.add_argument('--operation-summary',
+                       action='store_true',
+                       help='Generate operation summary files and graphs (all block sizes combined)')
     
     args = parser.parse_args()
     
@@ -540,6 +611,27 @@ Examples:
     
     # Create graphs from job summaries
     create_graphs_from_job_summaries(output_dir, args.graph_type)
+    
+    # Generate operation summary files and graphs (if requested)
+    operation_summary_files = []
+    if args.operation_summary:
+        print(f"\nGenerating operation summary files...")
+        print("-" * 50)
+        operation_summary_files = write_operation_summary_csv_files(all_machines_results, selected_block_sizes, output_dir)
+        
+        if operation_summary_files:
+            print(f"\nGenerating operation summary graphs...")
+            print("-" * 50)
+            summary_success_count = create_operation_summary_graphs(operation_summary_files, args.graph_type, output_dir)
+            print(f"\nSuccessfully created {summary_success_count} operation summary graphs")
+            
+            # List generated operation summary PNG files
+            import glob
+            summary_png_files = glob.glob(os.path.join(output_dir, "summary-*-all-blocks_comparison-*.png"))
+            if summary_png_files:
+                print(f"\nGenerated operation summary PNG files:")
+                for png_file in sorted(summary_png_files):
+                    print(f"  - {os.path.basename(png_file)}")
     
     print("\nAnalysis complete!")
 
@@ -664,7 +756,7 @@ def create_single_graph(csv_file, graph_type, output_dir):
                 
                 # Add subtitle with FIO configuration
                 if subtitle:
-                    plt.suptitle(subtitle, fontsize=10, y=0.88, ha='center', va='top')
+                    plt.suptitle(subtitle, fontsize=10, y=0.93, ha='center', va='top')
             else:
                 plt.title(csv_file.replace('_job_summary.csv', ''), fontsize=14, fontweight='bold')
         else:
@@ -705,6 +797,175 @@ def create_single_graph(csv_file, graph_type, output_dir):
     except Exception as e:
         print(f"Error creating {graph_type} graph for {csv_file}: {e}")
         return False
+
+
+def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.'):
+    """
+    Create graphs for operation summary CSV files (all block sizes combined).
+    Supports both bar and line graphs with individual block size averages.
+    """
+    try:
+        import matplotlib.pyplot as plt
+        import pandas as pd
+        import numpy as np
+        import re
+        
+        # Set matplotlib to use a non-interactive backend
+        import matplotlib
+        matplotlib.use('Agg')
+        
+        success_count = 0
+        
+        # Handle 'both' option by creating both bar and line graphs
+        graph_types = ['bar', 'line'] if graph_type == 'both' else [graph_type]
+        
+        for csv_file in csv_files:
+            for current_graph_type in graph_types:
+                try:
+                    # Read CSV file
+                    df = pd.read_csv(csv_file)
+                    
+                    # Extract operation from filename
+                    filename = os.path.basename(csv_file)
+                    match = re.search(r'summary-(\w+)-all-blocks\.csv', filename)
+                    if not match:
+                        continue
+                    operation = match.group(1)
+                    
+                    # Get block sizes (all columns except vm_name)
+                    block_sizes = [col for col in df.columns if col != 'vm_name']
+                    
+                    # Create the plot
+                    plt.figure(figsize=(14, 10))
+                    
+                    # Sort by vm_name for consistent ordering
+                    df_sorted = df.sort_values('vm_name')
+                    
+                    # Create numeric x-axis positions for all data points
+                    all_positions = range(len(df_sorted))
+                    
+                    # Create plot based on graph type
+                    colors = plt.cm.Set3(np.linspace(0, 1, len(block_sizes)))
+                    
+                    if current_graph_type == 'bar':
+                        # Create bar plot for each block size
+                        width = 0.8 / len(block_sizes)  # Width of each bar group
+                        
+                        for i, block_size in enumerate(block_sizes):
+                            offset = (i - len(block_sizes)/2 + 0.5) * width
+                            display_name = get_block_size_display_name(block_size)
+                            bars = plt.bar([pos + offset for pos in all_positions], 
+                                          df_sorted[block_size], 
+                                          width=width, 
+                                          label=display_name,
+                                          color=colors[i], 
+                                          alpha=0.8,
+                                          edgecolor='black',
+                                          linewidth=0.5)
+                    else:  # line graph
+                        # Create line plot for each block size
+                        for i, block_size in enumerate(block_sizes):
+                            display_name = get_block_size_display_name(block_size)
+                            plt.plot(all_positions, df_sorted[block_size], 
+                                    marker='o', linewidth=2, markersize=6,
+                                    label=display_name,
+                                    color=colors[i], 
+                                    markerfacecolor=colors[i],
+                                    markeredgecolor='black',
+                                    markeredgewidth=1)
+                
+                    # Calculate and display average for each individual block size
+                    for i, block_size in enumerate(block_sizes):
+                        block_data = df_sorted[block_size]
+                        # Calculate average for this specific block size
+                        block_average = block_data.mean()
+                        
+                        # Add horizontal line for this block size's average
+                        plt.axhline(y=block_average, color=colors[i], linestyle='--', linewidth=2, alpha=0.7)
+                
+                    # Get FIO configuration for subtitle (use first block size as reference)
+                    subtitle = ""
+                    if block_sizes:
+                        # Use the first block size to get FIO config for subtitle
+                        first_block_size = block_sizes[0]
+                        config_key = (operation, first_block_size)
+                        if config_key in FIO_CONFIGS:
+                            subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
+                    
+                    # Customize the plot
+                    num_vms = len(df_sorted)
+                    chart_type = "Bar Chart" if current_graph_type == 'bar' else "Line Chart"
+                    plt.title(f'Bandwidth Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
+                             fontsize=16, fontweight='bold', pad=20)
+                    
+                    # Add subtitle with FIO configuration
+                    if subtitle:
+                        plt.suptitle(subtitle, fontsize=10, y=0.93, ha='center', va='top')
+                    
+                    # Set axis labels
+                    plt.ylabel('Total bw_mean per machine [KB]', fontsize=12, fontweight='bold')
+                    plt.xlabel('Test machines', fontsize=12, fontweight='bold')
+                    
+                    # Remove X-axis labels completely
+                    plt.xticks(all_positions, [])
+                    
+                    # Set axis limits
+                    plt.xlim(-0.5, len(df_sorted) - 0.5)
+                    max_value = df_sorted[block_sizes].max().max()
+                    plt.ylim(0, max_value * 1.1)
+                    
+                    # Add legend on the right side of the graph
+                    plt.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), fontsize=10)
+                    
+                    # Add average value text boxes below the legend
+                    for i, block_size in enumerate(block_sizes):
+                        block_data = df_sorted[block_size]
+                        block_average = block_data.mean()
+                        display_name = get_block_size_display_name(block_size)
+                        
+                        # Position text boxes below the legend (right side)
+                        plt.text(1.02, 0.3 - (i * 0.08), f'{display_name} Avg: {block_average:.1f} KB', 
+                                transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
+                                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                                color=colors[i])
+                    
+                    # Add grid for better readability
+                    if current_graph_type == 'bar':
+                        plt.grid(axis='y', alpha=0.3, linestyle='--')
+                    else:  # line graph
+                        plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+                
+                    # Adjust layout to accommodate legend and text boxes on the right
+                    plt.tight_layout()
+                    plt.subplots_adjust(right=0.75)  # Make room for legend and text boxes
+                    
+                    # Generate PNG filename with block sizes and graph type included
+                    block_sizes_str = '-'.join(block_sizes)
+                    csv_basename = os.path.basename(csv_file)
+                    graph_suffix = 'bar' if current_graph_type == 'bar' else 'line'
+                    png_filename = csv_basename.replace('.csv', f'_comparison-{block_sizes_str}_average_{graph_suffix}.png')
+                    png_filepath = os.path.join(output_dir, png_filename)
+                    
+                    # Save the plot
+                    plt.savefig(png_filepath, dpi=300, bbox_inches='tight', 
+                               facecolor='white', edgecolor='none')
+                    plt.close()  # Close the figure to free memory
+                    
+                    print(f"Created operation summary graph: {png_filename}")
+                    success_count += 1
+                    
+                except Exception as e:
+                    print(f"Error creating operation summary graph for {csv_file}: {e}")
+        
+        return success_count
+        
+    except ImportError as e:
+        print(f"Error importing required libraries: {e}")
+        print("Please install required dependencies: pip install matplotlib pandas numpy")
+        return 0
+    except Exception as e:
+        print(f"Error in operation summary graph creation: {e}")
+        return 0
 
 
 if __name__ == "__main__":
