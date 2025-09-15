@@ -1249,12 +1249,13 @@ def create_single_graph(csv_file, graph_type, output_dir):
         
         plt.tight_layout()
                 
-                # Create output filename
+                # Create output filename with data type included
         csv_basename = os.path.basename(csv_file)
+        data_type_suffix = 'bw' if data_type == 'Bandwidth' else 'iops'
         if graph_type == 'bar':
-            output_filename = csv_basename.replace('.csv', '.png')
+            output_filename = csv_basename.replace('.csv', f'_{data_type_suffix}.png')
         else:  # line graph
-            output_filename = csv_basename.replace('.csv', f'_{graph_type}.png')
+            output_filename = csv_basename.replace('.csv', f'_{graph_type}_{data_type_suffix}.png')
         output_file = os.path.join(output_dir, output_filename)
                 
                 # Save the plot
@@ -1432,11 +1433,12 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                     plt.tight_layout()
                     plt.subplots_adjust(right=0.75)  # Make room for legend and text boxes
                     
-                    # Generate PNG filename with block sizes and graph type included
+                    # Generate PNG filename with block sizes, graph type, and data type included
                     block_sizes_str = '-'.join(block_sizes)
                     csv_basename = os.path.basename(csv_file)
                     graph_suffix = 'bar' if current_graph_type == 'bar' else 'line'
-                    png_filename = csv_basename.replace('.csv', f'_comparison-{block_sizes_str}_average_{graph_suffix}.png')
+                    data_type_suffix = 'bw' if data_type == 'bandwidth' else 'iops'
+                    png_filename = csv_basename.replace('.csv', f'_comparison-{block_sizes_str}_average_{graph_suffix}_{data_type_suffix}.png')
                     png_filepath = os.path.join(output_dir, png_filename)
                     
                     # Save the plot
