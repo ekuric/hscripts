@@ -202,10 +202,10 @@ def extract_iops_from_json(json_file_path):
                 if iops_value > 0:  # Only include non-zero IOPS
                     iops_values.append(iops_value)
         
-        # Aggregate IOPS values (sum them up since they represent different jobs)
+        # Aggregate IOPS values (average them since they represent different jobs)
         if iops_values:
             # Convert to integer to remove decimal places
-            iops_data[(operation, block_size)] = int(sum(iops_values))
+            iops_data[(operation, block_size)] = int(sum(iops_values) / len(iops_values))
     
     except (json.JSONDecodeError, KeyError, FileNotFoundError) as e:
         print(f"Error processing {json_file_path}: {e}")
@@ -631,7 +631,7 @@ def save_job_summarized_results(results, all_machines_results, output_dir='.', s
             for operation in results[machine].keys():
                 for block_size in results[machine][operation].keys():
                     items = results[machine][operation][block_size]
-                    total_bw = sum(item['bw_mean'] for item in items)
+                    total_bw = sum(item['bw_mean'] for item in items) / len(items) if items else 0
                     
                     f.write(f"{operation},{block_size},{total_bw}\n")
         print(f"Saved job-summarized results to: {filepath}")
@@ -653,7 +653,7 @@ def save_job_summarized_results(results, all_machines_results, output_dir='.', s
                 
                 # Calculate totals for each machine
                 for machine, items in machine_groups.items():
-                    total_bw = sum(item['bw_mean'] for item in items)
+                    total_bw = sum(item['bw_mean'] for item in items) / len(items) if items else 0
                     
                     f.write(f"{operation},{block_size},{machine},{total_bw}\n")
     
@@ -681,7 +681,7 @@ def save_job_summarized_results(results, all_machines_results, output_dir='.', s
                 
                 # Calculate totals for each machine
                 for machine, items in machine_groups.items():
-                    total_bw = sum(item['bw_mean'] for item in items)
+                    total_bw = sum(item['bw_mean'] for item in items) / len(items) if items else 0
                     
                     f.write(f"{machine},{total_bw}\n")
             
@@ -1008,14 +1008,22 @@ def save_results_to_files_iops(results, all_machines_results, output_dir='.', se
         all_machines_results = filtered_all_machines
     
     # Save per-machine results
+    # Group results by VM name
+    vm_results = defaultdict(lambda: defaultdict(dict))
     for (vm_name, operation, block_size), iops in results.items():
+        vm_results[vm_name][operation][block_size] = iops
+    
+    for vm_name in vm_results.keys():
         filename = f"{vm_name}_iops_results.csv"
         filepath = os.path.join(output_dir, filename)
         
         with open(filepath, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(['Operation', 'BlockSize', 'IOPS'])
-            writer.writerow([operation, block_size, iops])
+            
+            for operation in sorted(vm_results[vm_name].keys()):
+                for block_size in sorted(vm_results[vm_name][operation].keys()):
+                    writer.writerow([operation, block_size, vm_results[vm_name][operation][block_size]])
         
         print(f"Saved per-machine results to: {filepath}")
     
@@ -1075,14 +1083,22 @@ def save_job_summarized_results_iops(results, all_machines_results, output_dir='
         all_machines_results = filtered_all_machines
     
     # Save per-machine job summarized results
+    # Group results by VM name
+    vm_results = defaultdict(lambda: defaultdict(dict))
     for (vm_name, operation, block_size), iops in results.items():
+        vm_results[vm_name][operation][block_size] = iops
+    
+    for vm_name in vm_results.keys():
         filename = f"{vm_name}_iops_job_summary.csv"
         filepath = os.path.join(output_dir, filename)
         
         with open(filepath, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(['Machine', 'TotalIOPS'])
-            writer.writerow([vm_name, iops])
+            writer.writerow(['Operation', 'BlockSize', 'TotalIOPS'])
+            
+            for operation in sorted(vm_results[vm_name].keys()):
+                for block_size in sorted(vm_results[vm_name][operation].keys()):
+                    writer.writerow([operation, block_size, vm_results[vm_name][operation][block_size]])
         
         print(f"Saved job-summarized results to: {filepath}")
     
@@ -1268,7 +1284,7 @@ def create_single_graph(csv_file, graph_type, output_dir):
                 
                 # Add subtitle with FIO configuration
                 if subtitle:
-                    plt.suptitle(subtitle, fontsize=10, y=0.89, ha='center', va='top')
+                    plt.suptitle(subtitle, fontsize=10, y=0.93, ha='center', va='top')
                 else:
                     plt.title(csv_file.replace('_job_summary.csv', ''), fontsize=14, fontweight='bold')
         else:
@@ -1430,7 +1446,7 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                     
                     # Add subtitle with FIO configuration
                     if subtitle:
-                        plt.suptitle(subtitle, fontsize=10, y=0.89, ha='center', va='top')
+                        plt.suptitle(subtitle, fontsize=10, y=0.93, ha='center', va='top')
                     
                     # Set X-axis label
                     plt.xlabel('VM Index', fontsize=12, fontweight='bold')
