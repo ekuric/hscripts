@@ -35,6 +35,24 @@ def get_block_size_display_name(block_size):
     }
     return block_size_map.get(block_size.lower(), block_size.upper())
 
+def get_x_axis_labels_and_positions(df_sorted):
+    """
+    Determine X-axis labels and positions based on number of VMs.
+    Show every VM if <= 20, otherwise show every 30th VM.
+    """
+    num_vms = len(df_sorted)
+    # If num_vms is <= 20, show every VM - check this 
+    if num_vms <= 20:
+        # Show every VM
+        x_positions = range(num_vms)
+        x_labels = [f'VM {i+1}' for i in x_positions]
+        return x_positions, x_labels
+    else:
+        # Show every 30th VM for better visibility
+        x_positions = range(0, num_vms, 30)
+        x_labels = [f'VM {i+1}' for i in x_positions]
+        return x_positions, x_labels
+
 def extract_fio_config_from_json(json_file_path):
     """
     Extract FIO configuration from JSON file for subtitle display.
@@ -702,6 +720,9 @@ def create_single_graph(csv_file, graph_type, output_dir):
         total_bw = df['TotalBwMean'].tolist()
         all_positions = range(len(machines))
         
+        # Get X-axis labels and positions based on number of VMs
+        x_positions, x_labels = get_x_axis_labels_and_positions(df)
+        
         if graph_type == 'bar':
             # Create bar chart
             bars = plt.bar(all_positions, total_bw, color='skyblue', edgecolor='navy', alpha=0.7)
@@ -712,8 +733,8 @@ def create_single_graph(csv_file, graph_type, output_dir):
                     color='steelblue', markerfacecolor='lightblue', 
                     markeredgecolor='navy', markeredgewidth=2)
 
-        # Remove X-axis labels completely
-        plt.xticks(all_positions, [])
+        # Set x-axis ticks based on visibility rules
+        plt.xticks(x_positions, x_labels, rotation=45, ha='right')
         
         # Calculate average bandwidth (Total BW / number of machines)
         total_bw_sum = sum(total_bw)
@@ -731,7 +752,7 @@ def create_single_graph(csv_file, graph_type, output_dir):
         
         # Customize the plot
         plt.ylabel('Total bw_mean per machine [KB]', fontsize=10, fontweight='bold')
-        plt.xlabel('Test machines', fontsize=10, fontweight='bold')
+        plt.xlabel('VM Index', fontsize=10, fontweight='bold')
         
         # Extract block size and operation from filename for title
         if 'block_size_' in csv_file and '_operation_' in csv_file:
@@ -756,7 +777,7 @@ def create_single_graph(csv_file, graph_type, output_dir):
                 
                 # Add subtitle with FIO configuration
                 if subtitle:
-                    plt.suptitle(subtitle, fontsize=10, y=0.93, ha='center', va='top')
+                    plt.suptitle(subtitle, fontsize=10, y=0.89, ha='center', va='top')
             else:
                 plt.title(csv_file.replace('_job_summary.csv', ''), fontsize=14, fontweight='bold')
         else:
@@ -841,6 +862,9 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.')
                     # Sort by vm_name for consistent ordering
                     df_sorted = df.sort_values('vm_name')
                     
+                    # Get X-axis labels and positions based on number of VMs
+                    x_positions, x_labels = get_x_axis_labels_and_positions(df_sorted)
+                    
                     # Create numeric x-axis positions for all data points
                     all_positions = range(len(df_sorted))
                     
@@ -900,14 +924,14 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.')
                     
                     # Add subtitle with FIO configuration
                     if subtitle:
-                        plt.suptitle(subtitle, fontsize=10, y=0.93, ha='center', va='top')
+                        plt.suptitle(subtitle, fontsize=10, y=0.89, ha='center', va='top')
                     
                     # Set axis labels
                     plt.ylabel('Total bw_mean per machine [KB]', fontsize=12, fontweight='bold')
-                    plt.xlabel('Test machines', fontsize=12, fontweight='bold')
+                    plt.xlabel('VM Index', fontsize=12, fontweight='bold')
                     
-                    # Remove X-axis labels completely
-                    plt.xticks(all_positions, [])
+                    # Set x-axis ticks based on visibility rules
+                    plt.xticks(x_positions, x_labels, rotation=45, ha='right')
                     
                     # Set axis limits
                     plt.xlim(-0.5, len(df_sorted) - 0.5)
