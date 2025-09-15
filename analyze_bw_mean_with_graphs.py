@@ -26,6 +26,7 @@ Options:
     --graph-type TYPE      Type of graphs: bar, line, or both (default: bar)
     --block-sizes SIZES    Comma-separated block sizes to analyze (e.g., "4k,8k,128k")
     --operation-summary    Generate operation summary graphs (all block sizes combined)
+    --summary-only         Generate only summary graphs (skip per-VM comparison graphs)
     --help                 Show this help message
 
 Examples:
@@ -34,6 +35,7 @@ Examples:
     python3 analyze_bw_mean_with_graphs.py --iops --input-dir /path/to/data --output-dir /path/to/results
     python3 analyze_bw_mean_with_graphs.py --bw --graph-type line --block-sizes 4k,8k,128k
     python3 analyze_bw_mean_with_graphs.py --iops --operation-summary --graph-type both
+    python3 analyze_bw_mean_with_graphs.py --iops --summary-only
 """
 
 import json
@@ -222,27 +224,32 @@ def extract_bw_mean_from_json(file_path):
         # Extract FIO parameters for subtitle
         fio_params = {}
         
+        # Determine operation type from filename (same logic as IOPS extraction)
+        filename = os.path.basename(file_path)
+        if 'randread' in filename:
+            operation = 'randread'
+        elif 'randwrite' in filename:
+            operation = 'randwrite'
+        elif 'read' in filename:
+            operation = 'read'
+        elif 'write' in filename:
+            operation = 'write'
+        else:
+            return bw_values, {}
+        
         # Look for bw_mean in the jobs section (filtering out zero values)
         if 'jobs' in data:
             for job in data['jobs']:
-                # Check read operations
-                if 'read' in job and 'bw_mean' in job['read']:
-                    bw_mean_val = job['read']['bw_mean']
-                    # Skip zero values
-                    if bw_mean_val > 0:
-                        bw_values.append({
-                            'operation': 'read',
-                            'bw_mean': int(bw_mean_val),
-                            'job_name': job.get('jobname', 'unknown')
-                        })
+                # For randread, the data is stored under 'read' key
+                # For randwrite, the data is stored under 'write' key
+                data_key = 'read' if operation in ['read', 'randread'] else 'write'
                 
-                # Check write operations
-                if 'write' in job and 'bw_mean' in job['write']:
-                    bw_mean_val = job['write']['bw_mean']
+                if data_key in job and 'bw_mean' in job[data_key]:
+                    bw_mean_val = job[data_key]['bw_mean']
                     # Skip zero values
                     if bw_mean_val > 0:
                         bw_values.append({
-                            'operation': 'write',
+                            'operation': operation,
                             'bw_mean': int(bw_mean_val),
                             'job_name': job.get('jobname', 'unknown')
                         })
@@ -281,7 +288,9 @@ def parse_filename_info(filename):
     # Pattern: fio-test-{operation}-bs-{blocksize}.json
     match = re.match(r'fio-test-(\w+)-bs-(\w+)\.json', filename)
     if match:
-        return match.group(1), match.group(2)
+        operation = match.group(1)
+        block_size = match.group(2).lower()  # Convert to lowercase for consistency
+        return operation, block_size
     return None, None
 
 def analyze_all_directories(input_dir='.'):
@@ -734,6 +743,10 @@ Examples:
                        action='store_true',
                        help='Generate operation summary files and graphs (all block sizes combined)')
     
+    parser.add_argument('--summary-only',
+                       action='store_true',
+                       help='Generate only summary graphs (skip per-VM comparison graphs)')
+    
     args = parser.parse_args()
     
     # Validate input directory
@@ -798,7 +811,11 @@ Examples:
                     save_job_summarized_results_iops(results, all_machines_results, output_dir, selected_block_sizes)
                     
                     # Create graphs from job summaries
-                    create_graphs_from_job_summaries(output_dir, args.graph_type)
+                    if args.summary_only:
+                        print(f"\nCreating {args.graph_type} summary graphs only (per-VM graphs skipped)...")
+                    else:
+                        print(f"\nCreating {args.graph_type} graphs...")
+                    create_graphs_from_job_summaries(output_dir, args.graph_type, args.summary_only)
             else:
                 # Generate report
                 generate_report(results, all_machines_results)
@@ -810,7 +827,11 @@ Examples:
                 save_job_summarized_results_iops(results, all_machines_results, output_dir, selected_block_sizes)
                 
                 # Create graphs from job summaries
-                create_graphs_from_job_summaries(output_dir, args.graph_type)
+                if args.summary_only:
+                    print(f"\nCreating {args.graph_type} summary graphs only (per-VM graphs skipped)...")
+                else:
+                    print(f"\nCreating {args.graph_type} graphs...")
+                create_graphs_from_job_summaries(output_dir, args.graph_type, args.summary_only)
     
     # Handle bandwidth analysis
     if args.bw:
@@ -841,7 +862,11 @@ Examples:
                     save_job_summarized_results(results, all_machines_results, output_dir, selected_block_sizes)
                     
                     # Create graphs from job summaries
-                    create_graphs_from_job_summaries(output_dir, args.graph_type)
+                    if args.summary_only:
+                        print(f"\nCreating {args.graph_type} summary graphs only (per-VM graphs skipped)...")
+                    else:
+                        print(f"\nCreating {args.graph_type} graphs...")
+                    create_graphs_from_job_summaries(output_dir, args.graph_type, args.summary_only)
             else:
                 # Generate report
                 generate_report(results, all_machines_results)
@@ -853,7 +878,11 @@ Examples:
                 save_job_summarized_results(results, all_machines_results, output_dir, selected_block_sizes)
                 
                 # Create graphs from job summaries
-                create_graphs_from_job_summaries(output_dir, args.graph_type)
+                if args.summary_only:
+                    print(f"\nCreating {args.graph_type} summary graphs only (per-VM graphs skipped)...")
+                else:
+                    print(f"\nCreating {args.graph_type} graphs...")
+                create_graphs_from_job_summaries(output_dir, args.graph_type, args.summary_only)
     
     # Generate operation summary files and graphs (if requested)
     if args.operation_summary:
@@ -1085,8 +1114,15 @@ def save_job_summarized_results_iops(results, all_machines_results, output_dir='
             
             print(f"Saved job-summarized results to: {filepath}")
 
-def create_graphs_from_job_summaries(output_dir='.', graph_type='bar'):
-    """Create graphs from block size + operation job summary CSV files."""
+def create_graphs_from_job_summaries(output_dir='.', graph_type='bar', summary_only=False):
+    """
+    Create graphs from block size + operation job summary CSV files.
+    
+    Args:
+        output_dir: Directory to save output files
+        graph_type: Type of graphs ('bar', 'line', or 'both')
+        summary_only: If True, skip per-VM graphs and only create summary graphs
+    """
     try:
         import matplotlib.pyplot as plt
         import pandas as pd
@@ -1099,6 +1135,10 @@ def create_graphs_from_job_summaries(output_dir='.', graph_type='bar'):
         
         if not job_summary_files:
             print("No block size + operation job summary files found to create graphs from.")
+            return
+        
+        if summary_only:
+            print(f"\nSkipping per-VM graphs (summary-only mode enabled)")
             return
         
         print(f"\nCreating {graph_type} graphs from {len(job_summary_files)} block size + operation job summary files...")
@@ -1207,6 +1247,7 @@ def create_single_graph(csv_file, graph_type, output_dir):
         # Extract block size and operation from filename for title
         if 'block_size_' in csv_file and '_operation_' in csv_file:
             # Extract from filename like: all_machines_block_size_4k_operation_read_job_summary.csv
+            
             filename = os.path.basename(csv_file)
             parts = filename.replace('_job_summary.csv', '').split('_')
             if len(parts) >= 7:

@@ -12,12 +12,14 @@ Usage:
 Options:
     --graphs bar|line|both    Type of graphs to generate (default: both)
     --output-dir DIR         Output directory for results (default: current directory)
+    --summary-only           Generate only summary graphs (skip per-VM comparison graphs)
     --help                   Show this help message
 
 Examples:
     python3 test_comparison_analyzer.py test1/ test2/
     python3 test_comparison_analyzer.py test1/ test2/ --graphs bar
     python3 test_comparison_analyzer.py test1/ test2/ --output-dir results/
+    python3 test_comparison_analyzer.py test1/ test2/ --summary-only
 """
 
 import json
@@ -33,6 +35,8 @@ from pathlib import Path
 # Try to import optional dependencies
 try:
     import pandas as pd
+    import matplotlib
+    matplotlib.use('Agg')  # Use non-interactive backend for consistent rendering
     import matplotlib.pyplot as plt
     import numpy as np
     HAS_PLOTTING = True
@@ -374,10 +378,18 @@ def create_comparison_summary_csv(df, output_dir, metric_type='iops'):
     return csv_files
 
 
-def create_comparison_graphs(df, output_dir, graph_type='both', metric_type='iops', block_size_filter=None):
+def create_comparison_graphs(df, output_dir, graph_type='both', metric_type='iops', block_size_filter=None, summary_only=False):
     """
     Create summary comparison graphs showing test1 vs test2 results for each operation.
     Similar to iops_analyzer.py operation summary graphs.
+    
+    Args:
+        df: DataFrame with comparison data
+        output_dir: Directory to save graphs
+        graph_type: Type of graphs ('bar', 'line', 'both')
+        metric_type: Type of metric ('iops' or 'bw')
+        block_size_filter: List of block sizes to filter
+        summary_only: If True, skip per-VM graphs and only create summary graphs
     """
     if not HAS_PLOTTING:
         print("Cannot create graphs: plotting libraries not available")
@@ -424,12 +436,13 @@ def create_comparison_graphs(df, output_dir, graph_type='both', metric_type='iop
         if graph_type in ['line', 'both']:
             success_count += create_operation_summary_comparison_line_chart(op_data, operation, block_sizes, test_names, output_dir, metric_type)
         
-        # Create per-VM comparison graphs (like iops_analyzer.py)
-        if graph_type in ['bar', 'both']:
-            success_count += create_per_vm_comparison_bar_chart(op_data, operation, block_sizes, test_names, output_dir, metric_type)
-        
-        if graph_type in ['line', 'both']:
-            success_count += create_per_vm_comparison_line_chart(op_data, operation, block_sizes, test_names, output_dir, metric_type)
+        # Create per-VM comparison graphs (like iops_analyzer.py) - skip if summary_only is True
+        if not summary_only:
+            if graph_type in ['bar', 'both']:
+                success_count += create_per_vm_comparison_bar_chart(op_data, operation, block_sizes, test_names, output_dir, metric_type)
+            
+            if graph_type in ['line', 'both']:
+                success_count += create_per_vm_comparison_line_chart(op_data, operation, block_sizes, test_names, output_dir, metric_type)
     
     return success_count
 
@@ -786,10 +799,18 @@ def create_per_vm_comparison_bar_chart(df, operation, block_sizes, test_names, o
     for block_size in block_sizes:
         try:
             # Create figure
-            plt.figure(figsize=(14, 10))
+            plt.figure(figsize=(16, 10))
             
-            # Get all VMs and sort them
-            all_vms = sorted(df['vm_name'].unique())
+            # Get all VMs and sort them numerically
+            vm_names = df['vm_name'].unique()
+            # Sort VM names numerically (vm-1, vm-2, ..., vm-10, vm-11, etc.)
+            def sort_vm_names(vm_name):
+                # Extract the number from vm-X format
+                try:
+                    return int(vm_name.split('-')[1])
+                except (IndexError, ValueError):
+                    return 0
+            all_vms = sorted(vm_names, key=sort_vm_names)
             
             # Create numeric x-axis positions for all VMs
             all_positions = range(len(all_vms))
@@ -843,17 +864,17 @@ def create_per_vm_comparison_bar_chart(df, operation, block_sizes, test_names, o
             # Add subtitle with FIO configuration
             if subtitle:
                 plt.suptitle(subtitle, fontsize=12, y=0.91, ha='right', va='bottom')            
-            plt.xlabel('VM Index', fontsize=12, fontweight='bold')
+            plt.xlabel('Test Machines', fontsize=12, fontweight='bold')
             y_label = f'{metric_name} [KB]' if metric_type == 'bw' else metric_name
             plt.ylabel(y_label, fontsize=12, fontweight='bold')
             
-            # Set x-axis ticks (show every 10th VM if more than 20 VMs)
-            if len(all_vms) > 20:
-                x_positions = range(0, len(all_vms), 10)
-                x_labels = [f'VM {i+1}' for i in x_positions]
-            else:
+            # Set x-axis ticks (show every machine if <=20, otherwise every 10th machine)
+            if len(all_vms) <= 20:
                 x_positions = range(len(all_vms))
-                x_labels = [f'VM {i+1}' for i in x_positions]
+                x_labels = [all_vms[i] for i in x_positions]
+            else:
+                x_positions = range(0, len(all_vms), 10)
+                x_labels = [all_vms[i] for i in x_positions]
             
             plt.xticks(x_positions, x_labels, rotation=45, ha='right')
             
@@ -861,13 +882,19 @@ def create_per_vm_comparison_bar_chart(df, operation, block_sizes, test_names, o
             plt.tick_params(axis='x', which='major', labelsize=8, pad=8)
             plt.tick_params(axis='x', which='minor', labelsize=6)
             
-            # Add more spacing between major ticks for better readability
+            # Force all labels to be shown (prevent matplotlib from hiding labels)
+            plt.gca().set_xticks(x_positions)
+            plt.gca().set_xticklabels(x_labels, rotation=45, ha='right')
+            
+            # Ensure all ticks are visible
+            plt.gca().tick_params(axis='x', which='both', bottom=True, top=False)
+            plt.gca().set_xlim(-0.5, len(all_vms) - 0.5)
+            
+            # Add more spacing between major ticks for better readability (only for large datasets)
             if len(all_vms) > 20:
                 plt.gca().xaxis.set_major_locator(plt.MultipleLocator(10))
                 plt.gca().xaxis.set_minor_locator(plt.MultipleLocator(5))
-            else:
-                plt.gca().xaxis.set_major_locator(plt.MultipleLocator(5))
-                plt.gca().xaxis.set_minor_locator(plt.MultipleLocator(1))
+            # For ≤20 VMs, don't set locators to allow all labels to show
             
             # Add legend
             plt.legend(title='Test Directory', bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -940,10 +967,18 @@ def create_per_vm_comparison_line_chart(df, operation, block_sizes, test_names, 
     for block_size in block_sizes:
         try:
             # Create figure
-            plt.figure(figsize=(14, 10))
+            plt.figure(figsize=(16, 10))
             
-            # Get all VMs and sort them
-            all_vms = sorted(df['vm_name'].unique())
+            # Get all VMs and sort them numerically
+            vm_names = df['vm_name'].unique()
+            # Sort VM names numerically (vm-1, vm-2, ..., vm-10, vm-11, etc.)
+            def sort_vm_names(vm_name):
+                # Extract the number from vm-X format
+                try:
+                    return int(vm_name.split('-')[1])
+                except (IndexError, ValueError):
+                    return 0
+            all_vms = sorted(vm_names, key=sort_vm_names)
             
             # Create numeric x-axis positions for all VMs
             all_positions = range(len(all_vms))
@@ -996,17 +1031,17 @@ def create_per_vm_comparison_line_chart(df, operation, block_sizes, test_names, 
             if subtitle:
                 plt.suptitle(subtitle, fontsize=12, y=0.91, ha='right', va='bottom')
             
-            plt.xlabel('VM Index', fontsize=12, fontweight='bold')
+            plt.xlabel('Test Machines', fontsize=12, fontweight='bold')
             y_label = f'{metric_name} [KB]' if metric_type == 'bw' else metric_name
             plt.ylabel(y_label, fontsize=12, fontweight='bold')
             
-            # Set x-axis ticks (show every 10th VM if more than 20 VMs)
-            if len(all_vms) > 20:
-                x_positions = range(0, len(all_vms), 10)
-                x_labels = [f'VM {i+1}' for i in x_positions]
-            else:
+            # Set x-axis ticks (show every machine if <=20, otherwise every 10th machine)
+            if len(all_vms) <= 20:
                 x_positions = range(len(all_vms))
-                x_labels = [f'VM {i+1}' for i in x_positions]
+                x_labels = [all_vms[i] for i in x_positions]
+            else:
+                x_positions = range(0, len(all_vms), 10)
+                x_labels = [all_vms[i] for i in x_positions]
             
             plt.xticks(x_positions, x_labels, rotation=45, ha='right')
             
@@ -1014,13 +1049,19 @@ def create_per_vm_comparison_line_chart(df, operation, block_sizes, test_names, 
             plt.tick_params(axis='x', which='major', labelsize=8, pad=8)
             plt.tick_params(axis='x', which='minor', labelsize=6)
             
-            # Add more spacing between major ticks for better readability
+            # Force all labels to be shown (prevent matplotlib from hiding labels)
+            plt.gca().set_xticks(x_positions)
+            plt.gca().set_xticklabels(x_labels, rotation=45, ha='right')
+            
+            # Ensure all ticks are visible
+            plt.gca().tick_params(axis='x', which='both', bottom=True, top=False)
+            plt.gca().set_xlim(-0.5, len(all_vms) - 0.5)
+            
+            # Add more spacing between major ticks for better readability (only for large datasets)
             if len(all_vms) > 20:
                 plt.gca().xaxis.set_major_locator(plt.MultipleLocator(10))
                 plt.gca().xaxis.set_minor_locator(plt.MultipleLocator(5))
-            else:
-                plt.gca().xaxis.set_major_locator(plt.MultipleLocator(5))
-                plt.gca().xaxis.set_minor_locator(plt.MultipleLocator(1))
+            # For ≤20 VMs, don't set locators to allow all labels to show
             
             # Add legend
             plt.legend(title='Test Directory', bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -1093,6 +1134,8 @@ def main():
     parser.add_argument('--output-dir', default='.', help='Output directory for results (default: current directory)')
     parser.add_argument('--block-sizes', nargs='*', default=None,
                        help='Specify block sizes to analyze (e.g., --block-sizes 4k 8k 128k). If not specified, all available block sizes will be used.')
+    parser.add_argument('--summary-only', action='store_true',
+                       help='Generate only summary graphs (skip per-VM comparison graphs)')
     
     # Add metric selection group
     metric_group = parser.add_mutually_exclusive_group()
@@ -1170,10 +1213,13 @@ def main():
     
     # Create comparison graphs
     if args.graphs != 'none':
-        print(f"\nStep 3: Creating {args.graphs} comparison graphs...")
+        if args.summary_only:
+            print(f"\nStep 3: Creating {args.graphs} summary graphs only (per-VM graphs skipped)...")
+        else:
+            print(f"\nStep 3: Creating {args.graphs} comparison graphs...")
         print("-" * 40)
         
-        success_count = create_comparison_graphs(df, args.output_dir, args.graphs, metric_type, args.block_sizes)
+        success_count = create_comparison_graphs(df, args.output_dir, args.graphs, metric_type, args.block_sizes, args.summary_only)
         print(f"Successfully created {success_count} comparison graphs")
         
     
