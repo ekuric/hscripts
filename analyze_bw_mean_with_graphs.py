@@ -1,7 +1,39 @@
 #!/usr/bin/env python3
 """
-Script to analyze bw_mean values from FIO JSON files across multiple directories.
-Extracts bw_mean values for every operation and block size, per machine and aggregated.
+Unified FIO Analysis Tool
+========================
+
+This script analyzes both IOPS and bandwidth (bw_mean) values from FIO JSON files and generates comprehensive reports and graphs.
+
+Features:
+- Analyzes FIO JSON files from any subdirectories (not just vm-*)
+- Supports both IOPS and bandwidth analysis
+- Generates CSV files with performance data
+- Creates bar charts, line graphs, or both
+- Supports operation summary graphs with all block sizes
+- Configurable block size filtering
+- Customizable output directory
+- X-axis machine marking for better readability
+
+Usage:
+    python3 analyze_bw_mean_with_graphs.py [options]
+
+Options:
+    --iops                 Analyze IOPS data (iops_mean)
+    --bw                   Analyze bandwidth data (bw_mean)
+    --input-dir DIR        Directory containing FIO JSON files (default: current directory)
+    --output-dir DIR       Directory to save output files (default: current directory)
+    --graph-type TYPE      Type of graphs: bar, line, or both (default: bar)
+    --block-sizes SIZES    Comma-separated block sizes to analyze (e.g., "4k,8k,128k")
+    --operation-summary    Generate operation summary graphs (all block sizes combined)
+    --help                 Show this help message
+
+Examples:
+    python3 analyze_bw_mean_with_graphs.py --iops
+    python3 analyze_bw_mean_with_graphs.py --bw
+    python3 analyze_bw_mean_with_graphs.py --iops --input-dir /path/to/data --output-dir /path/to/results
+    python3 analyze_bw_mean_with_graphs.py --bw --graph-type line --block-sizes 4k,8k,128k
+    python3 analyze_bw_mean_with_graphs.py --iops --operation-summary --graph-type both
 """
 
 import json
@@ -102,6 +134,81 @@ def format_fio_subtitle(config_data):
         subtitle_parts.append(f"Rate IOPS: {config_data['rate_iops']}")
     
     return " | ".join(subtitle_parts)
+
+def extract_block_size_from_filename(filename):
+    """
+    Extract block size from filename (e.g., 'fio-test-read-bs-4k.json' -> '4k')
+    """
+    match = re.search(r'bs-(\d+[kmg]?)', filename, re.IGNORECASE)
+    if match:
+        return match.group(1).lower()
+    return 'unknown'
+
+def extract_iops_from_json(json_file_path):
+    """
+    Extract IOPS values from a FIO JSON file.
+    Returns a dictionary with operation types, block sizes, and their aggregated IOPS values.
+    Also stores FIO configuration data for subtitles.
+    """
+    global FIO_CONFIGS
+    iops_data = {}
+    
+    try:
+        with open(json_file_path, 'r') as f:
+            data = json.load(f)
+        
+        # Check if jobs exist
+        if 'jobs' not in data:
+            return iops_data
+        
+        # Extract operation type and block size from filename
+        filename = os.path.basename(json_file_path)
+        block_size = extract_block_size_from_filename(filename)
+        
+        # Skip files with unknown block sizes
+        if block_size == 'unknown':
+            print(f"Skipping {filename} - unknown block size")
+            return iops_data
+        
+        # Determine operation type from filename
+        if 'randread' in filename:
+            operation = 'randread'
+        elif 'randwrite' in filename:
+            operation = 'randwrite'
+        elif 'read' in filename:
+            operation = 'read'
+        elif 'write' in filename:
+            operation = 'write'
+        else:
+            return iops_data
+        
+        # Extract FIO configuration for subtitles
+        config_data = extract_fio_config_from_json(json_file_path)
+        config_key = (operation, block_size)
+        FIO_CONFIGS[config_key] = config_data
+        
+        # Collect all IOPS values for this operation across all jobs
+        iops_values = []
+        
+        for job in data['jobs']:
+            # For randread, the data is stored under 'read' key
+            # For randwrite, the data is stored under 'write' key
+            data_key = 'read' if operation in ['read', 'randread'] else 'write'
+            
+            if data_key in job and 'iops_mean' in job[data_key]:
+                iops_value = job[data_key]['iops_mean']
+                if iops_value > 0:  # Only include non-zero IOPS
+                    iops_values.append(iops_value)
+        
+        # Aggregate IOPS values (sum them up since they represent different jobs)
+        if iops_values:
+            # Convert to integer to remove decimal places
+            iops_data[(operation, block_size)] = int(sum(iops_values))
+    
+    except (json.JSONDecodeError, KeyError, FileNotFoundError) as e:
+        print(f"Error processing {json_file_path}: {e}")
+    
+    return iops_data
 
 def extract_bw_mean_from_json(file_path):
     """Extract bw_mean values from a JSON file, filtering out zero values."""
@@ -248,11 +355,17 @@ def analyze_all_directories(input_dir='.'):
     return results, all_machines_results
 
 def calculate_statistics(values):
-    """Calculate statistics for a list of bw_mean values."""
+    """Calculate statistics for a list of values (IOPS or bandwidth)."""
     if not values:
         return {}
     
-    bw_values = [v['bw_mean'] for v in values if isinstance(v['bw_mean'], (int, float))]
+    # Check if values are IOPS (integers) or bandwidth (dictionaries)
+    if isinstance(values[0], (int, float)):
+        # IOPS values are direct numbers
+        bw_values = [v for v in values if isinstance(v, (int, float))]
+    else:
+        # Bandwidth values are dictionaries with 'bw_mean' key
+        bw_values = [v['bw_mean'] for v in values if isinstance(v.get('bw_mean'), (int, float))]
     
     if not bw_values:
         return {}
@@ -276,21 +389,32 @@ def generate_report(results, all_machines_results):
     print("\nPER MACHINE RESULTS:")
     print("-" * 50)
     
-    for machine in sorted(results.keys()):
-        print(f"\nMachine: {machine}")
-        print("-" * 30)
-        
-        for operation in sorted(results[machine].keys()):
+    # Check if results is using tuple keys (IOPS) or nested dict structure (bandwidth)
+    if results and isinstance(next(iter(results.keys())), tuple):
+        # IOPS results structure: {(vm_name, operation, block_size): value}
+        for (vm_name, operation, block_size), value in sorted(results.items()):
+            print(f"\nMachine: {vm_name}")
+            print("-" * 30)
             print(f"  Operation: {operation}")
-            for block_size in sorted(results[machine][operation].keys()):
-                stats = calculate_statistics(results[machine][operation][block_size])
-                if stats:
-                    print(f"    Block Size: {block_size}")
-                    print(f"      Count: {stats['count']}")
-                    print(f"      Min: {stats['min']:.2f}")
-                    print(f"      Max: {stats['max']:.2f}")
-                    print(f"      Mean: {stats['mean']:.2f}")
-                    print(f"      Values: {[f'{v:.2f}' for v in stats['values']]}")
+            print(f"    Block Size: {block_size}")
+            print(f"      Value: {value:.2f}")
+    else:
+        # Bandwidth results structure: {machine: {operation: {block_size: value}}}
+        for machine in sorted(results.keys()):
+            print(f"\nMachine: {machine}")
+            print("-" * 30)
+            
+            for operation in sorted(results[machine].keys()):
+                print(f"  Operation: {operation}")
+                for block_size in sorted(results[machine][operation].keys()):
+                    stats = calculate_statistics(results[machine][operation][block_size])
+                    if stats:
+                        print(f"    Block Size: {block_size}")
+                        print(f"      Count: {stats['count']}")
+                        print(f"      Min: {stats['min']:.2f}")
+                        print(f"      Max: {stats['max']:.2f}")
+                        print(f"      Mean: {stats['mean']:.2f}")
+                        print(f"      Values: {[f'{v:.2f}' for v in stats['values']]}")
     
     # Aggregated results across all machines
     print("\n\nAGGREGATED RESULTS (ALL MACHINES):")
@@ -310,7 +434,12 @@ def generate_report(results, all_machines_results):
                 # Show per-machine breakdown
                 machine_stats = defaultdict(list)
                 for item in all_machines_results[operation][block_size]:
-                    machine_stats[item['machine']].append(item['bw_mean'])
+                    if isinstance(item, (int, float)):
+                        # IOPS data - direct values
+                        machine_stats['all_machines'].append(item)
+                    else:
+                        # Bandwidth data - dictionary with machine and bw_mean
+                        machine_stats[item['machine']].append(item['bw_mean'])
                 
                 print(f"    Per Machine:")
                 for machine in sorted(machine_stats.keys()):
@@ -319,17 +448,24 @@ def generate_report(results, all_machines_results):
 
 def filter_results_by_block_sizes(results, all_machines_results, selected_block_sizes):
     """Filter results to only include selected block sizes."""
-    filtered_results = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    # Check if results is using tuple keys (IOPS) or nested dict structure (bandwidth)
+    if results and isinstance(next(iter(results.keys())), tuple):
+        # IOPS results structure: {(vm_name, operation, block_size): value}
+        filtered_results = {}
+        for (vm_name, operation, block_size), value in results.items():
+            if block_size in selected_block_sizes:
+                filtered_results[(vm_name, operation, block_size)] = value
+    else:
+        # Bandwidth results structure: {machine: {operation: {block_size: value}}}
+        filtered_results = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        for machine in results:
+            for operation in results[machine]:
+                for block_size in results[machine][operation]:
+                    if block_size in selected_block_sizes:
+                        filtered_results[machine][operation][block_size] = results[machine][operation][block_size]
+    
+    # Filter all-machines results (same structure for both)
     filtered_all_machines_results = defaultdict(lambda: defaultdict(list))
-    
-    # Filter per-machine results
-    for machine in results:
-        for operation in results[machine]:
-            for block_size in results[machine][operation]:
-                if block_size in selected_block_sizes:
-                    filtered_results[machine][operation][block_size] = results[machine][operation][block_size]
-    
-    # Filter all-machines results
     for operation in all_machines_results:
         for block_size in all_machines_results[operation]:
             if block_size in selected_block_sizes:
@@ -350,13 +486,23 @@ def write_operation_summary_csv_files(all_machines_results, selected_block_sizes
             operation_results[operation] = {}
         
         for block_size, items in block_data.items():
-            for item in items:
-                vm_name = item['machine']
-                bw_mean = item['bw_mean']
-                
-                if vm_name not in operation_results[operation]:
-                    operation_results[operation][vm_name] = {}
-                operation_results[operation][vm_name][block_size] = bw_mean
+            # Check if items are IOPS (integers) or bandwidth (dictionaries)
+            if items and isinstance(items[0], (int, float)):
+                # IOPS data - items are direct values, need to create VM names
+                for i, iops_value in enumerate(items):
+                    vm_name = f"VM-{i+1}"  # Create VM names for IOPS data
+                    if vm_name not in operation_results[operation]:
+                        operation_results[operation][vm_name] = {}
+                    operation_results[operation][vm_name][block_size] = iops_value
+            else:
+                # Bandwidth data - items are dictionaries with machine and bw_mean
+                for item in items:
+                    vm_name = item['machine']
+                    bw_mean = item['bw_mean']
+                    
+                    if vm_name not in operation_results[operation]:
+                        operation_results[operation][vm_name] = {}
+                    operation_results[operation][vm_name][block_size] = bw_mean
     
     # Write CSV files for each operation
     csv_files_created = []
@@ -540,20 +686,30 @@ def save_job_summarized_results(results, all_machines_results, output_dir='.', s
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(
-        description='Bandwidth Analysis Tool for FIO Results',
+        description='Unified FIO Analysis Tool - IOPS and Bandwidth Analysis',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python3 analyze_bw_mean_with_graphs.py                    # Analyze current directory
-  python3 analyze_bw_mean_with_graphs.py --input-dir /path/to/data  # Analyze specific directory
-  python3 analyze_bw_mean_with_graphs.py --output-dir /path/to/results  # Save results to specific directory
-  python3 analyze_bw_mean_with_graphs.py --graph-type line  # Generate line graphs
-  python3 analyze_bw_mean_with_graphs.py --graph-type both  # Generate both bar and line graphs
-  python3 analyze_bw_mean_with_graphs.py --block-sizes 4k,8k,128k  # Analyze specific block sizes
-  python3 analyze_bw_mean_with_graphs.py --operation-summary  # Generate operation summary graphs
-  python3 analyze_bw_mean_with_graphs.py --input-dir /data --output-dir /results --graph-type line --block-sizes 4k,8k --operation-summary  # All options
+  python3 analyze_bw_mean_with_graphs.py --iops                    # Analyze IOPS data
+  python3 analyze_bw_mean_with_graphs.py --bw                      # Analyze bandwidth data
+  python3 analyze_bw_mean_with_graphs.py --iops --input-dir /path/to/data  # Analyze IOPS from specific directory
+  python3 analyze_bw_mean_with_graphs.py --bw --output-dir /path/to/results  # Save bandwidth results to specific directory
+  python3 analyze_bw_mean_with_graphs.py --iops --graph-type line  # Generate IOPS line graphs
+  python3 analyze_bw_mean_with_graphs.py --bw --graph-type both  # Generate both bar and line bandwidth graphs
+  python3 analyze_bw_mean_with_graphs.py --iops --block-sizes 4k,8k,128k  # Analyze specific block sizes for IOPS
+  python3 analyze_bw_mean_with_graphs.py --bw --operation-summary  # Generate bandwidth operation summary graphs
+  python3 analyze_bw_mean_with_graphs.py --iops --input-dir /data --output-dir /results --graph-type line --block-sizes 4k,8k --operation-summary  # All IOPS options
         """
     )
+    
+    # Analysis type selection
+    parser.add_argument('--iops',
+                       action='store_true',
+                       help='Analyze IOPS data (iops_mean)')
+    
+    parser.add_argument('--bw',
+                       action='store_true',
+                       help='Analyze bandwidth data (bw_mean)')
     
     parser.add_argument('--input-dir',
                        type=str,
@@ -594,18 +750,17 @@ Examples:
     else:
         print(f"Using output directory: {output_dir}")
     
+    # Validate that at least one analysis type is selected
+    if not args.iops and not args.bw:
+        print("Error: You must specify either --iops or --bw (or both)")
+        parser.print_help()
+        sys.exit(1)
+    
     print("=" * 60)
-    print("BANDWIDTH ANALYSIS TOOL")
+    print("UNIFIED FIO ANALYSIS TOOL")
     print("=" * 60)
     print(f"Using input directory: {input_dir}")
     print(f"Using output directory: {output_dir}")
-    
-    # Analyze all directories
-    results, all_machines_results = analyze_all_directories(input_dir)
-    
-    if not results:
-        print("No data found to analyze.")
-        return
     
     # Parse selected block sizes if provided
     selected_block_sizes = None
@@ -613,47 +768,322 @@ Examples:
         selected_block_sizes = [bs.strip().lower() for bs in args.block_sizes.split(',')]
         display_selected = [get_block_size_display_name(bs) for bs in selected_block_sizes]
         print(f"Selected block sizes for analysis: {', '.join(display_selected)}")
+    
+    # Handle IOPS analysis
+    if args.iops:
+        print("\n" + "=" * 60)
+        print("IOPS ANALYSIS")
+        print("=" * 60)
         
-        # Filter results to only include selected block sizes
-        results, all_machines_results = filter_results_by_block_sizes(results, all_machines_results, selected_block_sizes)
+        # Analyze all directories for IOPS
+        results, all_machines_results = analyze_all_directories_iops(input_dir)
         
         if not results:
-            print("No data found for the selected block sizes.")
-            return
+            print("No IOPS data found to analyze.")
+        else:
+            # Filter results to only include selected block sizes
+            if selected_block_sizes:
+                results, all_machines_results = filter_results_by_block_sizes(results, all_machines_results, selected_block_sizes)
+                
+                if not results:
+                    print("No IOPS data found for the selected block sizes.")
+                else:
+                    # Generate report
+                    generate_report(results, all_machines_results)
+                    
+                    # Save results to files
+                    save_results_to_files_iops(results, all_machines_results, output_dir, selected_block_sizes)
+                    
+                    # Save job summarized results
+                    save_job_summarized_results_iops(results, all_machines_results, output_dir, selected_block_sizes)
+                    
+                    # Create graphs from job summaries
+                    create_graphs_from_job_summaries(output_dir, args.graph_type)
+            else:
+                # Generate report
+                generate_report(results, all_machines_results)
+                
+                # Save results to files
+                save_results_to_files_iops(results, all_machines_results, output_dir, selected_block_sizes)
+                
+                # Save job summarized results
+                save_job_summarized_results_iops(results, all_machines_results, output_dir, selected_block_sizes)
+                
+                # Create graphs from job summaries
+                create_graphs_from_job_summaries(output_dir, args.graph_type)
     
-    # Generate report
-    generate_report(results, all_machines_results)
-    
-    # Save results to files
-    save_results_to_files(results, all_machines_results, output_dir, selected_block_sizes)
-    
-    # Create graphs from job summaries
-    create_graphs_from_job_summaries(output_dir, args.graph_type)
+    # Handle bandwidth analysis
+    if args.bw:
+        print("\n" + "=" * 60)
+        print("BANDWIDTH ANALYSIS")
+        print("=" * 60)
+        
+        # Analyze all directories for bandwidth
+        results, all_machines_results = analyze_all_directories(input_dir)
+        
+        if not results:
+            print("No bandwidth data found to analyze.")
+        else:
+            # Filter results to only include selected block sizes
+            if selected_block_sizes:
+                results, all_machines_results = filter_results_by_block_sizes(results, all_machines_results, selected_block_sizes)
+                
+                if not results:
+                    print("No bandwidth data found for the selected block sizes.")
+                else:
+                    # Generate report
+                    generate_report(results, all_machines_results)
+                    
+                    # Save results to files
+                    save_results_to_files(results, all_machines_results, output_dir, selected_block_sizes)
+                    
+                    # Save job summarized results
+                    save_job_summarized_results(results, all_machines_results, output_dir, selected_block_sizes)
+                    
+                    # Create graphs from job summaries
+                    create_graphs_from_job_summaries(output_dir, args.graph_type)
+            else:
+                # Generate report
+                generate_report(results, all_machines_results)
+                
+                # Save results to files
+                save_results_to_files(results, all_machines_results, output_dir, selected_block_sizes)
+                
+                # Save job summarized results
+                save_job_summarized_results(results, all_machines_results, output_dir, selected_block_sizes)
+                
+                # Create graphs from job summaries
+                create_graphs_from_job_summaries(output_dir, args.graph_type)
     
     # Generate operation summary files and graphs (if requested)
-    operation_summary_files = []
     if args.operation_summary:
-        print(f"\nGenerating operation summary files...")
-        print("-" * 50)
-        operation_summary_files = write_operation_summary_csv_files(all_machines_results, selected_block_sizes, output_dir)
-        
-        if operation_summary_files:
-            print(f"\nGenerating operation summary graphs...")
+        if args.iops:
+            print(f"\nGenerating IOPS operation summary files...")
             print("-" * 50)
-            summary_success_count = create_operation_summary_graphs(operation_summary_files, args.graph_type, output_dir)
-            print(f"\nSuccessfully created {summary_success_count} operation summary graphs")
+            # Get IOPS results for operation summary
+            iops_results, iops_all_machines_results = analyze_all_directories_iops(input_dir)
+            if selected_block_sizes:
+                iops_results, iops_all_machines_results = filter_results_by_block_sizes(iops_results, iops_all_machines_results, selected_block_sizes)
             
-            # List generated operation summary PNG files
-            import glob
-            summary_png_files = glob.glob(os.path.join(output_dir, "summary-*-all-blocks_comparison-*.png"))
-            if summary_png_files:
-                print(f"\nGenerated operation summary PNG files:")
-                for png_file in sorted(summary_png_files):
-                    print(f"  - {os.path.basename(png_file)}")
+            if iops_all_machines_results:
+                operation_summary_files = write_operation_summary_csv_files(iops_all_machines_results, selected_block_sizes, output_dir)
+                
+                if operation_summary_files:
+                    print(f"\nGenerating IOPS operation summary graphs...")
+                    print("-" * 50)
+                    summary_success_count = create_operation_summary_graphs(operation_summary_files, args.graph_type, output_dir, 'iops')
+                    print(f"\nSuccessfully created {summary_success_count} IOPS operation summary graphs")
+        
+        if args.bw:
+            print(f"\nGenerating bandwidth operation summary files...")
+            print("-" * 50)
+            # Get bandwidth results for operation summary
+            bw_results, bw_all_machines_results = analyze_all_directories(input_dir)
+            if selected_block_sizes:
+                bw_results, bw_all_machines_results = filter_results_by_block_sizes(bw_results, bw_all_machines_results, selected_block_sizes)
+            
+            if bw_all_machines_results:
+                operation_summary_files = write_operation_summary_csv_files(bw_all_machines_results, selected_block_sizes, output_dir)
+                
+                if operation_summary_files:
+                    print(f"\nGenerating bandwidth operation summary graphs...")
+                    print("-" * 50)
+                    summary_success_count = create_operation_summary_graphs(operation_summary_files, args.graph_type, output_dir, 'bandwidth')
+                    print(f"\nSuccessfully created {summary_success_count} bandwidth operation summary graphs")
+        
+        # List generated operation summary PNG files
+        import glob
+        summary_png_files = glob.glob(os.path.join(output_dir, "summary-*-all-blocks_comparison-*.png"))
+        if summary_png_files:
+            print(f"\nGenerated operation summary PNG files:")
+            for png_file in sorted(summary_png_files):
+                print(f"  - {os.path.basename(png_file)}")
     
     print("\nAnalysis complete!")
 
+# IOPS Processing Functions
+def process_vm_directory_iops(vm_dir):
+    """
+    Process all JSON files in a directory for IOPS data.
+    Returns a dictionary with (operation, block_size) as key and iops as value.
+    """
+    results = {}
+    vm_name = os.path.basename(vm_dir)
+    
+    # Find all JSON files in the directory
+    json_files = glob.glob(os.path.join(vm_dir, "*.json"))
+    
+    for json_file in json_files:
+        iops_data = extract_iops_from_json(json_file)
+        
+        for (operation, block_size), iops in iops_data.items():
+            key = (vm_name, operation, block_size)
+            results[key] = iops
+    
+    return results
 
+def analyze_all_directories_iops(input_dir='.'):
+    """Analyze all directories for JSON files and extract IOPS values."""
+    
+    # Find all directories containing FIO JSON files
+    test_dirs = []
+    for item in os.listdir(input_dir):
+        item_path = os.path.join(input_dir, item)
+        if os.path.isdir(item_path):
+            # Check if this directory contains FIO JSON files
+            json_files = glob.glob(os.path.join(item_path, "*.json"))
+            if json_files:
+                test_dirs.append(item_path)
+    
+    if not test_dirs:
+        print(f"No directories with JSON files found in {input_dir}")
+        return {}, {}
+    
+    print(f"Found {len(test_dirs)} directories with FIO JSON files:")
+    for test_dir in test_dirs:
+        print(f"  - {os.path.basename(test_dir)}")
+    
+    # Process each directory
+    all_results = {}
+    all_machines_results = defaultdict(lambda: defaultdict(list))
+    
+    for test_dir in test_dirs:
+        print(f"\nAnalyzing directory: {os.path.basename(test_dir)}")
+        vm_results = process_vm_directory_iops(test_dir)
+        all_results.update(vm_results)
+        
+        # Group by operation and block size for aggregated results
+        for (vm_name, operation, block_size), iops in vm_results.items():
+            all_machines_results[operation][block_size].append(iops)
+            print(f"  Processing: {vm_name} (op: {operation}, bs: {block_size})")
+    
+    return all_results, all_machines_results
+
+def save_results_to_files_iops(results, all_machines_results, output_dir='.', selected_block_sizes=None):
+    """Save IOPS results to CSV files."""
+    
+    # Filter results by selected block sizes if specified
+    if selected_block_sizes:
+        filtered_results = {}
+        for (vm_name, operation, block_size), iops in results.items():
+            if block_size in selected_block_sizes:
+                filtered_results[(vm_name, operation, block_size)] = iops
+        results = filtered_results
+        
+        # Also filter all_machines_results
+        filtered_all_machines = defaultdict(lambda: defaultdict(list))
+        for operation, block_sizes in all_machines_results.items():
+            for block_size, iops_list in block_sizes.items():
+                if block_size in selected_block_sizes:
+                    filtered_all_machines[operation][block_size] = iops_list
+        all_machines_results = filtered_all_machines
+    
+    # Save per-machine results
+    for (vm_name, operation, block_size), iops in results.items():
+        filename = f"{vm_name}_iops_results.csv"
+        filepath = os.path.join(output_dir, filename)
+        
+        with open(filepath, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['Operation', 'BlockSize', 'IOPS'])
+            writer.writerow([operation, block_size, iops])
+        
+        print(f"Saved per-machine results to: {filepath}")
+    
+    # Save aggregated results by operation
+    for operation, block_sizes in all_machines_results.items():
+        filename = f"{operation}_all_machines_iops_results.csv"
+        filepath = os.path.join(output_dir, filename)
+        
+        with open(filepath, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['BlockSize', 'TotalIOPS', 'MinIOPS', 'MaxIOPS', 'MeanIOPS'])
+            
+            for block_size, iops_list in block_sizes.items():
+                total_iops = sum(iops_list)
+                min_iops = min(iops_list)
+                max_iops = max(iops_list)
+                mean_iops = sum(iops_list) / len(iops_list)
+                writer.writerow([block_size, total_iops, min_iops, max_iops, mean_iops])
+        
+        print(f"Saved {operation} aggregated results to: {filepath}")
+    
+    # Save combined aggregated results
+    filename = "all_machines_iops_results.csv"
+    filepath = os.path.join(output_dir, filename)
+    
+    with open(filepath, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['Operation', 'BlockSize', 'TotalIOPS', 'MinIOPS', 'MaxIOPS', 'MeanIOPS'])
+        
+        for operation, block_sizes in all_machines_results.items():
+            for block_size, iops_list in block_sizes.items():
+                total_iops = sum(iops_list)
+                min_iops = min(iops_list)
+                max_iops = max(iops_list)
+                mean_iops = sum(iops_list) / len(iops_list)
+                writer.writerow([operation, block_size, total_iops, min_iops, max_iops, mean_iops])
+    
+    print(f"Saved combined aggregated results to: {filepath}")
+
+def save_job_summarized_results_iops(results, all_machines_results, output_dir='.', selected_block_sizes=None):
+    """Save IOPS job summarized results to CSV files."""
+    
+    # Filter results by selected block sizes if specified
+    if selected_block_sizes:
+        filtered_results = {}
+        for (vm_name, operation, block_size), iops in results.items():
+            if block_size in selected_block_sizes:
+                filtered_results[(vm_name, operation, block_size)] = iops
+        results = filtered_results
+        
+        # Also filter all_machines_results
+        filtered_all_machines = defaultdict(lambda: defaultdict(list))
+        for operation, block_sizes in all_machines_results.items():
+            for block_size, iops_list in block_sizes.items():
+                if block_size in selected_block_sizes:
+                    filtered_all_machines[operation][block_size] = iops_list
+        all_machines_results = filtered_all_machines
+    
+    # Save per-machine job summarized results
+    for (vm_name, operation, block_size), iops in results.items():
+        filename = f"{vm_name}_iops_job_summary.csv"
+        filepath = os.path.join(output_dir, filename)
+        
+        with open(filepath, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['Machine', 'TotalIOPS'])
+            writer.writerow([vm_name, iops])
+        
+        print(f"Saved job-summarized results to: {filepath}")
+    
+    # Save all machines job summarized results
+    filename = "all_machines_iops_job_summary.csv"
+    filepath = os.path.join(output_dir, filename)
+    
+    with open(filepath, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['Machine', 'TotalIOPS'])
+        
+        for (vm_name, operation, block_size), iops in results.items():
+            writer.writerow([vm_name, iops])
+    
+    print(f"Saved all machines job-summarized results to: {filepath}")
+    
+    # Save block size + operation job summarized results
+    for operation, block_sizes in all_machines_results.items():
+        for block_size, iops_list in block_sizes.items():
+            filename = f"all_machines_block_size_{block_size}_operation_{operation}_job_summary.csv"
+            filepath = os.path.join(output_dir, filename)
+            
+            with open(filepath, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['Machine', 'TotalIOPS'])
+                
+                for i, iops in enumerate(iops_list):
+                    writer.writerow([f"VM-{i+1}", iops])
+            
+            print(f"Saved job-summarized results to: {filepath}")
 
 def create_graphs_from_job_summaries(output_dir='.', graph_type='bar'):
     """Create graphs from block size + operation job summary CSV files."""
@@ -708,8 +1138,21 @@ def create_single_graph(csv_file, graph_type, output_dir):
         df = pd.read_csv(csv_file)
         
         # Skip if file doesn't have the expected columns
-        if 'Machine' not in df.columns or 'TotalBwMean' not in df.columns:
-            print(f"Skipping {csv_file}: Missing required columns")
+        if 'Machine' not in df.columns:
+            print(f"Skipping {csv_file}: Missing Machine column")
+            return
+        
+        # Determine if this is IOPS or bandwidth data
+        if 'TotalIOPS' in df.columns:
+            data_column = 'TotalIOPS'
+            data_type = 'IOPS'
+            y_label = 'Total IOPS per machine'
+        elif 'TotalBwMean' in df.columns:
+            data_column = 'TotalBwMean'
+            data_type = 'Bandwidth'
+            y_label = 'Total bw_mean per machine [KB]'
+        else:
+            print(f"Skipping {csv_file}: Missing TotalIOPS or TotalBwMean column")
             return
         
         # Create the plot
@@ -717,7 +1160,7 @@ def create_single_graph(csv_file, graph_type, output_dir):
         
         # Create numeric x-axis positions for all data points
         machines = df['Machine'].tolist()
-        total_bw = df['TotalBwMean'].tolist()
+        total_data = df[data_column].tolist()
         all_positions = range(len(machines))
         
         # Get X-axis labels and positions based on number of VMs
@@ -725,10 +1168,10 @@ def create_single_graph(csv_file, graph_type, output_dir):
         
         if graph_type == 'bar':
             # Create bar chart
-            bars = plt.bar(all_positions, total_bw, color='skyblue', edgecolor='navy', alpha=0.7)
+            bars = plt.bar(all_positions, total_data, color='skyblue', edgecolor='navy', alpha=0.7)
         else:  # line graph
             # Create line plot
-            plt.plot(all_positions, total_bw, 
+            plt.plot(all_positions, total_data, 
                     marker='o', linewidth=3, markersize=8, 
                     color='steelblue', markerfacecolor='lightblue', 
                     markeredgecolor='navy', markeredgewidth=2)
@@ -736,22 +1179,29 @@ def create_single_graph(csv_file, graph_type, output_dir):
         # Set x-axis ticks based on visibility rules
         plt.xticks(x_positions, x_labels, rotation=45, ha='right')
         
-        # Calculate average bandwidth (Total BW / number of machines)
-        total_bw_sum = sum(total_bw)
+        # Calculate average (Total / number of machines)
+        total_data_sum = sum(total_data)
         num_machines = len(machines)
-        average_bw = total_bw_sum / num_machines if num_machines > 0 else 0
+        average_data = total_data_sum / num_machines if num_machines > 0 else 0
         
-        # Add horizontal line for average bandwidth
-        plt.axhline(y=average_bw, color='red', linestyle='--', linewidth=2, alpha=0.8, 
-                   label=f'Average: {average_bw:.1f} KB')
-        
-        # Add text annotation for the average value
-        plt.text(0.02, 0.98, f'Average BW: {average_bw:.1f} KB', 
-                transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
-                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-        
+        # Add horizontal line for average
+        if data_type == 'IOPS':
+            plt.axhline(y=average_data, color='red', linestyle='--', linewidth=2, alpha=0.8, 
+                       label=f'Average: {average_data:.1f} IOPS')
+            # Add text annotation for the average value
+            plt.text(0.02, 0.98, f'Average IOPS: {average_data:.1f}', 
+                    transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
+                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        else:
+            plt.axhline(y=average_data, color='red', linestyle='--', linewidth=2, alpha=0.8, 
+                       label=f'Average: {average_data:.1f} KB')
+            # Add text annotation for the average value
+            plt.text(0.02, 0.98, f'Average BW: {average_data:.1f} KB', 
+                    transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
+                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                
         # Customize the plot
-        plt.ylabel('Total bw_mean per machine [KB]', fontsize=10, fontweight='bold')
+        plt.ylabel(y_label, fontsize=10, fontweight='bold')
         plt.xlabel('VM Index', fontsize=10, fontweight='bold')
         
         # Extract block size and operation from filename for title
@@ -772,21 +1222,21 @@ def create_single_graph(csv_file, graph_type, output_dir):
                 # Customize the plot
                 num_vms = len(df)
                 chart_type = "Bar Chart" if graph_type == 'bar' else "Line Chart"
-                plt.title(f'Bandwidth Performance ({chart_type}): {operation.upper()} - {block_size.upper()} Block Size ({num_vms} VMs)', 
+                plt.title(f'{data_type} Performance ({chart_type}): {operation.upper()} - {block_size.upper()} Block Size ({num_vms} VMs)', 
                          fontsize=16, fontweight='bold', pad=20)
                 
                 # Add subtitle with FIO configuration
                 if subtitle:
                     plt.suptitle(subtitle, fontsize=10, y=0.89, ha='center', va='top')
-            else:
-                plt.title(csv_file.replace('_job_summary.csv', ''), fontsize=14, fontweight='bold')
+                else:
+                    plt.title(csv_file.replace('_job_summary.csv', ''), fontsize=14, fontweight='bold')
         else:
             # For per-machine files like: vm-1_bw_mean_job_summary.csv
             plt.title(csv_file.replace('_bw_mean_job_summary.csv', ''), fontsize=14, fontweight='bold')
 
         # Set axis limits to include zero
         plt.xlim(-0.5, len(machines) - 0.5)
-        plt.ylim(0, max(total_bw) * 1.1)
+        plt.ylim(0, max(total_data) * 1.1)
         
         # Customize grid and layout
         if graph_type == 'bar':
@@ -798,20 +1248,20 @@ def create_single_graph(csv_file, graph_type, output_dir):
         plt.legend(loc='upper right', fontsize=9)
         
         plt.tight_layout()
-        
-        # Create output filename
+                
+                # Create output filename
         csv_basename = os.path.basename(csv_file)
         if graph_type == 'bar':
             output_filename = csv_basename.replace('.csv', '.png')
         else:  # line graph
             output_filename = csv_basename.replace('.csv', f'_{graph_type}.png')
         output_file = os.path.join(output_dir, output_filename)
-        
-        # Save the plot
+                
+                # Save the plot
         plt.savefig(output_file, dpi=300, bbox_inches='tight', 
                    facecolor='white', edgecolor='none')
         plt.close()
-        
+                
         print(f"Created {graph_type} graph: {output_file}")
         return True
         
@@ -820,10 +1270,16 @@ def create_single_graph(csv_file, graph_type, output_dir):
         return False
 
 
-def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.'):
+def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.', data_type='bandwidth'):
     """
     Create graphs for operation summary CSV files (all block sizes combined).
     Supports both bar and line graphs with individual block size averages.
+    
+    Args:
+        csv_files: List of CSV files to process
+        graph_type: Type of graph ('bar', 'line', or 'both')
+        output_dir: Directory to save output files
+        data_type: Type of data ('iops' or 'bandwidth')
     """
     try:
         import matplotlib.pyplot as plt
@@ -919,15 +1375,22 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.')
                     # Customize the plot
                     num_vms = len(df_sorted)
                     chart_type = "Bar Chart" if current_graph_type == 'bar' else "Line Chart"
-                    plt.title(f'Bandwidth Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
-                             fontsize=16, fontweight='bold', pad=20)
+                    
+                    # Set title and Y-axis label based on data type
+                    if data_type == 'iops':
+                        plt.title(f'IOPS Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
+                                 fontsize=16, fontweight='bold', pad=20)
+                        plt.ylabel('Total IOPS per machine', fontsize=12, fontweight='bold')
+                    else:
+                        plt.title(f'Bandwidth Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
+                                 fontsize=16, fontweight='bold', pad=20)
+                        plt.ylabel('Total bw_mean per machine [KB]', fontsize=12, fontweight='bold')
                     
                     # Add subtitle with FIO configuration
                     if subtitle:
                         plt.suptitle(subtitle, fontsize=10, y=0.89, ha='center', va='top')
                     
-                    # Set axis labels
-                    plt.ylabel('Total bw_mean per machine [KB]', fontsize=12, fontweight='bold')
+                    # Set X-axis label
                     plt.xlabel('VM Index', fontsize=12, fontweight='bold')
                     
                     # Set x-axis ticks based on visibility rules
@@ -947,8 +1410,14 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.')
                         block_average = block_data.mean()
                         display_name = get_block_size_display_name(block_size)
                         
+                        # Set unit based on data type
+                        if data_type == 'iops':
+                            unit_text = f'{display_name} Avg: {block_average:.1f} IOPS'
+                        else:
+                            unit_text = f'{display_name} Avg: {block_average:.1f} KB'
+                        
                         # Position text boxes below the legend (right side)
-                        plt.text(1.02, 0.3 - (i * 0.08), f'{display_name} Avg: {block_average:.1f} KB', 
+                        plt.text(1.02, 0.3 - (i * 0.08), unit_text, 
                                 transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
                                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
                                 color=colors[i])
