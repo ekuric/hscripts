@@ -1,4 +1,4 @@
-# IOPS Analysis Tools
+# FIO BW and IOPS Analysis Tools
 
 A comprehensive suite of Python tools for analyzing FIO (Flexible I/O Tester) performance results, with support for IOPS and bandwidth analysis, graph generation, and test comparison.
 
@@ -7,11 +7,8 @@ A comprehensive suite of Python tools for analyzing FIO (Flexible I/O Tester) pe
 - [Overview](#overview)
 - [Installation](#installation)
 - [Tools](#tools)
-  - [iops_analyzer.py](#iops_analyzerpy)
-  - [analyze_bw_mean_with_graphs.py](#analyze_bw_mean_with_graphspy)
   - [analyze_bw_mean_with_line_graphs.py](#analyze_bw_mean_with_line_graphspy)
   - [test_comparison_analyzer.py](#test_comparison_analyzerpy)
-  - [compare_tests.sh](#compare_testssh)
 - [Usage Examples](#usage-examples)
 - [Output Files](#output-files)
 - [Requirements](#requirements)
@@ -21,7 +18,7 @@ A comprehensive suite of Python tools for analyzing FIO (Flexible I/O Tester) pe
 
 This toolkit provides comprehensive analysis of FIO test results with the following capabilities:
 
-- **IOPS Analysis**: Extract and analyze IOPS metrics from FIO JSON files
+- **IOPS Analysis**: Extract and analyze IOPS ( iops_mean ) metrics from FIO JSON files
 - **Bandwidth Analysis**: Extract and analyze bandwidth (bw_mean) metrics
 - **Graph Generation**: Create bar charts and line graphs for visualization
 - **Test Comparison**: Compare results between different test runs
@@ -45,19 +42,19 @@ pip install -r requirements.txt
 Or install manually:
 
 ```bash
-pip install pandas matplotlib numpy
+pip install pandas matplotlib numpy seaborn 
 ```
 
 ## Tools
 
-### iops_analyzer.py
+### analyze_bw_mean_with_graphs.py 
 
-**Main IOPS analysis tool** that processes FIO JSON files and generates comprehensive analysis reports.
+**Main IOPS and BW analysis tool** that processes FIO JSON files and generates comprehensive analysis reports.
 
 #### Features
 
-- Extracts IOPS data from FIO JSON files in in structure `test-fio/*` directories - this means if we put inside `test-fio` directories with fio `.json` results it will analyze these results 
-run `python iops_analyzer.py --help` for comprehensive help output. 
+- Extracts IOPS and BW data from FIO JSON files in in structure `test-fio/*` directories - this means if we put fio results inside `test-fio` directories saved in json format it will analyze these files and created graphs.
+run `python3 analyze_bw_mean_with_graphs.py --help` for comprehensive help output. 
 
 - Generates CSV files with integer IOPS values
 - Creates PNG graphs (bar charts, line graphs, or both)
@@ -69,104 +66,28 @@ run `python iops_analyzer.py --help` for comprehensive help output.
 #### Usage
 
 ```bash
-python3 iops_analyzer.py [options]
-
-python3 iops_analyzer.py [-h] [--graphs {bar,line,both}] [--operation-summary] [--block-sizes BLOCK_SIZES]
-                        [--results RESULTS] [--input-dir INPUT_DIR]
+$ python3 analyze_bw_mean_with_graphs.py [-h] [--iops] [--bw] [--input-dir INPUT_DIR] [--output-dir OUTPUT_DIR] [--graph-type {bar,line,both}] [--block-sizes BLOCK_SIZES] [--operation-summary] [--summary-only]
 ```
 
 #### Options
 
-- `--graphs {bar,line,both}`: Type of graphs to generate (default: bar)
+- `--graph-type {bar,line,both}`: Type of graphs to generate
 - `--operation-summary`: Generate operation summary files (all block sizes combined)
 - `--block-sizes BLOCK_SIZES`: Comma-separated list of block sizes to include in operation summary (e.g., "4k,8k,128k")
-- `--results RESULTS`: Directory to save results (CSV and PNG files). Default: current directory
-- `--input-dir`: INPUT_DIR Directory containing FIO JSON files in subdirectories (any name). Default: current directory
-
+- `--input-dir`: INPUT_DIR Directory containing FIO JSON files in subdirectories (any name).
+- `--summary-only`: Generate only summary graphs (skip per-VM comparison graphs)
+- `--output-dir`: Directory to save output files (CSV and PNG) 
 - `--help`: Show help message
 
 #### Examples
 
-```bash
-# Generate bar charts in current directory
-python3 iops_analyzer.py
-
-# Generate line graphs
-python3 iops_analyzer.py --graphs line --input-dir location_of_fio_directories
-
-# Generate both bar and line graphs
-python3 iops_analyzer.py --graphs both --input-dir location_of_fio_directories
-
-# Generate operation summary with specific block sizes
-python3 iops_analyzer.py --operation-summary --block-sizes 4k,8k,128k --input-dir location_of_fio_directories
-
-# Save results to specific directory
-python3 iops_analyzer.py --results /path/to/results --input-dir location_of_fio_directories
-
-# Combined example
-python3 iops_analyzer.py --results results/run1 --graphs both --operation-summary --block-sizes 4k,8k,128k --input-dir location_of_fio_directories
-```
-
-### analyze_bw_mean_with_graphs.py
-
-**Bandwidth analysis tool** that extracts and analyzes bandwidth (bw_mean) metrics from FIO JSON files.
-
-#### Features
-
-- Extracts bw_mean values from FIO JSON files
-- Filters out zero values for accurate analysis
-- Generates bar charts for bandwidth visualization
-- Supports multiple test directories
-- Per-machine and aggregated analysis
-- Automatic operation and block size detection
-
-#### Usage
+We need to run single command to generate results
 
 ```bash
-usage: analyze_bw_mean_with_graphs.py [-h] [--input-dir INPUT_DIR] [--output-dir OUTPUT_DIR]
-                                      [--graph-type {bar,line,both}] [--block-sizes BLOCK_SIZES]
-
-Bandwidth Analysis Tool for FIO Results
-
-options:
-  -h, --help            show this help message and exit
-  --input-dir INPUT_DIR
-                        Directory containing FIO JSON files in subdirectories (any name). Default: current directory
-  --output-dir OUTPUT_DIR
-                        Directory to save output files (CSV and PNG). Default: current directory
-  --graph-type {bar,line,both}
-                        Type of graphs to generate (default: bar)
-  --block-sizes BLOCK_SIZES
-                        Comma-separated list of block sizes to analyze (e.g., "4k,8k,128k")
-
-Examples:
-  python3 analyze_bw_mean_with_graphs.py                    # Analyze current directory
-  python3 analyze_bw_mean_with_graphs.py --input-dir /path/to/data  # Analyze specific directory
-  python3 analyze_bw_mean_with_graphs.py --output-dir /path/to/results  # Save results to specific directory
-  python3 analyze_bw_mean_with_graphs.py --graph-type line  # Generate line graphs
-  python3 analyze_bw_mean_with_graphs.py --graph-type both  # Generate both bar and line graphs
-  python3 analyze_bw_mean_with_graphs.py --block-sizes 4k,8k,128k  # Analyze specific block sizes
-  python3 analyze_bw_mean_with_graphs.py --input-dir /data --output-dir /results --graph-type line --block-sizes 4k,8k  # All options
+python3 analyze_bw_mean_with_graphs.py --input-dir fio-results --output-dir iops-bw-output --graph-type line  --operation-summary --summary-only --iops –bw 
 ```
+After executing above command results will be saved to `--output-dir` for further analysis. 
 
-#### Examples
-
-```bash
-# Analyze current directory
-python3 analyze_bw_mean_with_graphs.py 
-
-# Analyze specific directories in /path/to/results
-
- python3 analyze_bw_mean_with_graphs.py --output-dir /path/to/results 
-
- # Analyze fio data saved in /data and sve results in /results 
- python3 analyze_bw_mean_with_graphs.py --input-dir /data --output-dir /results --graph-type both 
-
- # Analyze fio data - only 4k, 8k block sizes 
-
- python3 analyze_bw_mean_with_graphs.py --input-dir /data --output-dir /results --graph-type line --block-sizes 4k,8k
-
-```
 
 ### test_comparison_analyzer.py
 
@@ -185,61 +106,28 @@ python3 analyze_bw_mean_with_graphs.py
 #### Usage
 
 ```bash
-python3 test_comparison_analyzer.py test1_dir test2_dir [options]
+test_comparison_analyzer.py [-h] [--graphs {bar,line,both,none}] [--output-dir OUTPUT_DIR] [--block-sizes [BLOCK_SIZES ...]] [--summary-only] [--iops | --bw] directories [directories ...]
 ```
 
 #### Options
 
-- `--graphs {bar,line,both,none}`: Type of graphs to generate (default: both)
-- `--output-dir DIR`: Output directory for results (default: current directory)
-- `--bw`: Analyze bandwidth instead of IOPS
-- `--block-sizes SIZE [SIZE ...]`: Specify block sizes to analyze
-- `--help`: Show help message
+  - `-h --help`: show this help message and exit
+  - `--graphs {bar,line,both,none}`: Type of graphs to generate
+  - `--output-dir`: OUTPUT_DIR Output directory for results (default: current directory)
+  `--block-sizes:` [BLOCK_SIZES ...] Specify block sizes to analyze (e.g., --block-sizes 4k 8k 128k). If not specified, all available block sizes will be used.
+  `--summary-only`: Generate only summary graphs (skip per-VM comparison graphs)
+  `--iops`: Analyze IOPS performance (default)
+  `--bw:`:  Analyze bandwidth performance
 
 #### Examples
 
 ```bash
-# Compare two test directories
-python3 test_comparison_analyzer.py test1/ test2/
+# Compare two test directories and generate iops summary 
+python3 test_comparison_analyzer.py fio-results-default/ fio-results-rate_iops_100/ --graphs bar  --output-dir test1vstest2 --iops
 
-# Compare with specific graph type
-python3 test_comparison_analyzer.py test1/ test2/ --graphs bar
-
-# Compare bandwidth results
-python3 test_comparison_analyzer.py test1/ test2/ --bw
-
-# Compare specific block sizes
-python3 test_comparison_analyzer.py test1/ test2/ --block-sizes 4k 8k 128k
-
-# Save results to specific directory
-python3 test_comparison_analyzer.py test1/ test2/ --output-dir comparison_results/
+# Compare two test directories and generate bandwidth  summary 
+python3 test_comparison_analyzer.py fio-results-default/ fio-results-rate_iops_100/ --graphs bar  --output-dir test1vstest2 --bw
 ```
-
-### compare_tests.sh
-
-**Shell script wrapper** for the test comparison analyzer with additional convenience features.
-
-#### Features
-
-- Simplified command-line interface
-- Automatic directory validation
-- Status reporting
-- Support for all comparison analyzer options
-
-#### Usage
-
-```bash
-./compare_tests.sh [options] test1_dir test2_dir
-```
-
-#### Options
-
-- `-g, --graphs TYPE`: Graph type (bar, line, both, none)
-- `-o, --output-dir DIR`: Output directory
-- `-b, --bandwidth`: Analyze bandwidth instead of IOPS
-- `-s, --block-sizes SIZE [SIZE ...]`: Block sizes to analyze
-- `-h, --help`: Show help message
-
 #### Examples
 
 ```bash
@@ -253,62 +141,6 @@ python3 test_comparison_analyzer.py test1/ test2/ --output-dir comparison_result
 ./compare_tests.sh -b -s 4k 8k 128k test1/ test2/
 ```
 
-## Usage Examples
-
-### Basic IOPS Analysis
-
-```bash
-# Analyze IOPS in current directory
-python3 iops_analyzer.py
-
-# Generate line graphs
-python3 iops_analyzer.py --graphs line
-
-# Save to results directory
-python3 iops_analyzer.py --results results/baseline
-```
-
-### Bandwidth Analysis
-
-```bash
-# Analyze bandwidth with bar charts
-python3 analyze_bw_mean_with_graphs.py
-
-# Analyze bandwidth with line charts
-python3 analyze_bw_mean_with_line_graphs.py
-
-# Analyze specific test directories
-python3 analyze_bw_mean_with_graphs.py test1/ test2/ test3/
-```
-
-### Test Comparison
-
-```bash
-# Compare two test runs
-python3 test_comparison_analyzer.py baseline/ optimized/
-
-# Compare bandwidth results
-python3 test_comparison_analyzer.py baseline/ optimized/ --bw
-
-# Compare specific block sizes
-python3 test_comparison_analyzer.py baseline/ optimized/ --block-sizes 4k 8k 128k
-
-# Using shell script wrapper
-./compare_tests.sh -g both -o comparison_results/ baseline/ optimized/
-```
-
-### Advanced Usage
-
-```bash
-# Comprehensive analysis with operation summary
-python3 iops_analyzer.py --results results/comprehensive --graphs both --operation-summary --block-sizes 4k,8k,128k,1024k
-
-# Compare multiple block sizes with bandwidth analysis
-python3 test_comparison_analyzer.py test1/ test2/ --bw --block-sizes 4k 8k 128k 1024k --output-dir bw_comparison/
-
-# Generate only CSV files (no graphs)
-python3 test_comparison_analyzer.py test1/ test2/ --graphs none
-```
 
 ## Output Files
 
@@ -333,20 +165,6 @@ python3 test_comparison_analyzer.py test1/ test2/ --graphs none
 - **Comparison Graphs**: `comparison_{operation}_{block_size}_per_vm_{graph_type}_{metric}.png`
 - **Summary Graphs**: `comparison_{operation}_summary_{graph_type}_{metric}.png`
 - **Comparison Report**: `comparison_report.txt`
-
-## Requirements
-
-### Python Dependencies
-
-- **pandas** (>=1.3.0): Data manipulation and analysis
-- **matplotlib** (>=3.5.0): Graph and chart generation
-- **numpy** (>=1.21.0): Numerical operations
-
-### System Requirements
-
-- Python 3.6 or higher
-- FIO test results in JSON format
-- Sufficient disk space for output files
 
 ## File Structure
 
@@ -386,8 +204,6 @@ results_directory/
 ```bash
 # Create organized directory structure
 mkdir -p results/{baseline,optimized,comparison}
-python3 iops_analyzer.py --results results/baseline
-python3 iops_analyzer.py --results results/optimized
 python3 test_comparison_analyzer.py results/baseline/ results/optimized/ --output-dir results/comparison/
 ```
 
@@ -395,7 +211,6 @@ python3 test_comparison_analyzer.py results/baseline/ results/optimized/ --outpu
 
 ```bash
 # Analyze only relevant block sizes
-python3 iops_analyzer.py --operation-summary --block-sizes 4k,8k,128k
 python3 test_comparison_analyzer.py test1/ test2/ --block-sizes 4k 8k 128k
 ```
 
@@ -403,7 +218,6 @@ python3 test_comparison_analyzer.py test1/ test2/ --block-sizes 4k 8k 128k
 
 ```bash
 # Generate both bar and line charts for comprehensive analysis
-python3 iops_analyzer.py --graphs both
 python3 test_comparison_analyzer.py test1/ test2/ --graphs both
 ```
 
@@ -411,8 +225,7 @@ python3 test_comparison_analyzer.py test1/ test2/ --graphs both
 
 ```bash
 # Use descriptive names for different test runs
-python3 iops_analyzer.py --results results/2024-01-15_baseline_100vm
-python3 iops_analyzer.py --results results/2024-01-15_optimized_100vm
+python3 analyze_bw_mean_with_graphs.py  --input-dir  results/2024-01-15_baseline_100vm
 ```
 
 ## Troubleshooting
@@ -421,7 +234,7 @@ python3 iops_analyzer.py --results results/2024-01-15_optimized_100vm
 
 1. **No vm-* directories found**
    - Ensure FIO test results are in the correct directory structure
-   - Check that vm-* directories contain JSON files
+   - Check that machine-* directories contain JSON files
 
 2. **Missing dependencies**
    - Install required packages: `pip install -r requirements.txt`
@@ -435,6 +248,7 @@ python3 iops_analyzer.py --results results/2024-01-15_optimized_100vm
    - Check FIO JSON files for valid data
    - Verify that tests completed successfully
    - Check for rate limiting or other FIO configuration issues
+
 
 ### Getting Help
 
@@ -452,6 +266,104 @@ When adding new features or fixing issues:
 4. Test with various input configurations
 5. Follow the existing code style and structure
 
-## License
 
-This project is provided as-is for FIO performance analysis. Please ensure you have appropriate permissions for any test data and results.
+
+## Directory Structure Expected for test_comparison_anaylzer.py 
+
+```
+baseline/ (or any directory name)
+├── vm-1/
+│   ├── fio-test-read-bs-4k.json
+│   ├── fio-test-write-bs-4k.json
+│   ├── fio-test-randread-bs-4k.json
+│   ├── fio-test-randwrite-bs-4k.json
+│   └── ... (other block sizes)
+└── vm-2/
+    ├── fio-test-read-bs-4k.json
+    ├── fio-test-write-bs-4k.json
+    └── ... (other block sizes)
+
+optimized/ (or any directory name)
+├── vm-1/
+│   ├── fio-test-read-bs-4k.json
+│   ├── fio-test-write-bs-4k.json
+│   └── ... (other block sizes)
+└── vm-2/
+    ├── fio-test-read-bs-4k.json
+    ├── fio-test-write-bs-4k.json
+    └── ... (other block sizes)
+```
+
+This tool expect below
+
+- fio output json files must have fio `operation` name and `block size` in its name, for example `fio-read-4k.json` or `write-fio-1024k.json` are valid names
+- it expect fio output to be in `json` format so ensure your fio results are save in json format
+- directory structure as stated above
+
+In future releases we will make it to work without these limitations. 
+
+
+## Output Files
+
+The tool generates several types of output files:
+
+### CSV Files
+- `test_comparison_summary.csv` - Complete comparison data
+- `comparison_{operation}_read_{metric}.csv` - Read metric comparison by operation (iops or bw)
+- `comparison_{operation}_write_{metric}.csv` - Write metric comparison by operation (iops or bw)
+- `{vm_name}_detailed_metrics.csv` - Individual machine detailed metrics (one file per VM)
+
+### PNG Graphs
+- `comparison_{operation}_summary_bar_{metric}.png` - Summary bar chart comparison with total metric values (sum across all VMs) displayed on bars
+- `comparison_{operation}_summary_line_{metric}.png` - Summary line chart comparison with total metric values (sum across all VMs) displayed on data points
+- `comparison_{operation}_{block_size}_per_vm_bar_{metric}.png` - Per-VM bar chart showing individual VM performance for specific block size (test1 vs test2 vs test3) with total sum annotations
+- `comparison_{operation}_{block_size}_per_vm_line_{metric}.png` - Per-VM line chart showing individual VM performance for specific block size (test1 vs test2 vs test3) with total sum annotations
+
+**Note**: `{metric}` is either `iops` or `bw` depending on the analysis type (--iops or --bw option)
+
+### Text Report
+- `comparison_report.txt` - Human-readable comparison report with improvement percentages
+
+## Features
+
+1. **Automatic Data Extraction**: Extracts IOPS, bandwidth, and latency data from FIO JSON files
+   - **Multi-Job Support**: Automatically sums metrics across multiple FIO jobs running on the same machine
+2. **Multiple Directory Support**: Compare 2 or more test directories in a single analysis
+3. **Metric Selection**: Choose between IOPS analysis (default) or bandwidth analysis (--bw option)
+4. **Sum Analysis**: Shows the total sum of all VMs for each FIO operation (e.g., sum of read IOPS/bandwidth from vm-1 + vm-2 + vm-3 + ...)
+5. **Summary Comparison Graphs**: Creates single graphs comparing all test directories for each operation (sum across all VMs)
+6. **Per-VM Comparison Graphs**: Creates detailed graphs showing individual VM performance across different test directories (like iops_analyzer.py)
+   - **One graph per block size**: Each graph shows test1 vs test2 vs test3 for a specific block size only
+   - **Clean comparison**: Easier to read and compare test results for each block size separately
+   - **Total sum annotations**: Shows "Total across all VMs" values under the legend on the right side for organized display
+7. **Per-Machine CSV Files**: Creates individual CSV files for each machine with detailed metrics
+   - **One CSV per machine**: Each VM gets its own detailed metrics file (e.g., `vm-1_detailed_metrics.csv`)
+   - **Complete metrics**: Includes IOPS, bandwidth, latency, and file information for all operations and block sizes
+   - **No graphs needed**: Use `--graphs none` to generate only CSV files without any graphs
+8. **FIO Configuration Subtitles**: Displays FIO job configuration on all graphs
+   - **Complete configuration**: Shows size, block size, runtime, direct, numjobs, iodepth, and rate_iops (if used)
+   - **Automatic extraction**: Extracts configuration from FIO JSON files automatically
+   - **All graph types**: Subtitles appear on summary graphs, per-VM graphs, bar charts, and line charts
+9. **Data Points Display**: Shows metric values directly on graphs (on bars for bar charts, on data points for line charts)
+10. **Multiple Graph Types**: Supports bar charts, line charts, or both
+11. **Performance Metrics**: Calculates improvement percentages between first and last test directories
+12. **Comprehensive Reports**: Generates both CSV data and human-readable reports
+13. **Flexible Output**: Supports custom output directories
+14. **Flexible Directory Naming**: Works with any directory names (baseline/optimized, before/after, etc.)
+
+## Example Output
+
+The tool will show:
+- Overall performance comparison between all test directories
+- **Multi-job aggregation**: Automatically sums IOPS and bandwidth across multiple FIO jobs per machine
+- IOPS or bandwidth improvements/degradations by operation and block size
+- **Sum of all VMs** for each FIO operation (total performance across all machines)
+- **Individual VM performance** across different test directories and block sizes
+- Summary comparison graphs with data points showing exact metric values
+- Per-VM comparison graphs showing detailed individual machine performance
+- **Total sum annotations**: "Total across all VMs" values displayed under the legend on the right side of each per-block-size graph
+- **Individual machine CSV files**: Detailed metrics for each VM in separate CSV files
+- Performance differences across all block sizes for each operation
+- Visual comparison with precise numerical values displayed on graphs
+- Improvement percentages from first to last test directory
+
