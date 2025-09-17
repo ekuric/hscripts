@@ -50,6 +50,12 @@ import csv
 from collections import defaultdict
 from pathlib import Path
 
+def ensure_csv_directory(output_dir):
+    """Ensure the csv_files subdirectory exists within the output directory."""
+    csv_dir = os.path.join(output_dir, 'csv_files')
+    os.makedirs(csv_dir, exist_ok=True)
+    return csv_dir
+
 # Global variable to store FIO configurations for subtitles
 FIO_CONFIGS = {}
 
@@ -519,10 +525,11 @@ def write_operation_summary_csv_files(all_machines_results, selected_block_sizes
     
     # Write CSV files for each operation
     csv_files_created = []
+    csv_dir = ensure_csv_directory(output_dir)
     
     for operation, vm_data in operation_results.items():
         filename = f"summary-{operation}-all-blocks.csv"
-        filepath = os.path.join(output_dir, filename)
+        filepath = os.path.join(csv_dir, filename)
         
         # Get all unique block sizes for this operation
         all_block_sizes = set()
@@ -565,9 +572,10 @@ def save_results_to_files(results, all_machines_results, output_dir='.', selecte
     """Save results to CSV files for further analysis."""
     
     # Save per-machine results
+    csv_dir = ensure_csv_directory(output_dir)
     for machine in results.keys():
         filename = f"{os.path.basename(machine)}_bw_mean_results.csv"
-        filepath = os.path.join(output_dir, filename)
+        filepath = os.path.join(csv_dir, filename)
         with open(filepath, 'w') as f:
             f.write("Operation,BlockSize,JobName,BwMean\n")
             for operation in results[machine].keys():
@@ -579,7 +587,7 @@ def save_results_to_files(results, all_machines_results, output_dir='.', selecte
     # Save aggregated results per operation
     for operation in all_machines_results.keys():
         filename = f"{operation}_all_machines_bw_mean_results.csv"
-        filepath = os.path.join(output_dir, filename)
+        filepath = os.path.join(csv_dir, filename)
         with open(filepath, 'w') as f:
             f.write("BlockSize,Machine,JobName,BwMean\n")
             for block_size in all_machines_results[operation].keys():
@@ -602,7 +610,7 @@ def save_results_to_files(results, all_machines_results, output_dir='.', selecte
                 size_part = block_size
             
             filename = f"all_machines_block_size_{size_part}_operation_{operation}.csv"
-            filepath = os.path.join(output_dir, filename)
+            filepath = os.path.join(csv_dir, filename)
             with open(filepath, 'w') as f:
                 f.write("Machine,JobName,BwMean\n")
                 for item in all_machines_results[operation][block_size]:
@@ -611,7 +619,7 @@ def save_results_to_files(results, all_machines_results, output_dir='.', selecte
     
     # Also save combined results for backward compatibility
     filename = "all_machines_bw_mean_results.csv"
-    filepath = os.path.join(output_dir, filename)
+    filepath = os.path.join(csv_dir, filename)
     with open(filepath, 'w') as f:
         f.write("Operation,BlockSize,Machine,JobName,BwMean\n")
         for operation in all_machines_results.keys():
@@ -627,9 +635,10 @@ def save_job_summarized_results(results, all_machines_results, output_dir='.', s
     """Save results with sum of all jobs per machine, operation, and block size."""
     
     # Save per-machine job-summarized results
+    csv_dir = ensure_csv_directory(output_dir)
     for machine in results.keys():
         filename = f"{os.path.basename(machine)}_bw_mean_job_summary.csv"
-        filepath = os.path.join(output_dir, filename)
+        filepath = os.path.join(csv_dir, filename)
         with open(filepath, 'w') as f:
             f.write("Operation,BlockSize,TotalBwMean\n")
             for operation in results[machine].keys():
@@ -642,7 +651,7 @@ def save_job_summarized_results(results, all_machines_results, output_dir='.', s
     
     # Save all machines job-summarized results
     filename = "all_machines_bw_mean_job_summary.csv"
-    filepath = os.path.join(output_dir, filename)
+    filepath = os.path.join(csv_dir, filename)
     with open(filepath, 'w') as f:
         f.write("Operation,BlockSize,Machine,TotalBwMean\n")
         for operation in all_machines_results.keys():
@@ -671,7 +680,7 @@ def save_job_summarized_results(results, all_machines_results, output_dir='.', s
                 continue
                 
             filename = f"all_machines_block_size_{block_size}_operation_{operation}_job_summary.csv"
-            filepath = os.path.join(output_dir, filename)
+            filepath = os.path.join(csv_dir, filename)
             with open(filepath, 'w') as f:
                 f.write("Machine,TotalBwMean\n")
                 
@@ -995,6 +1004,8 @@ def analyze_all_directories_iops(input_dir='.'):
 def save_results_to_files_iops(results, all_machines_results, output_dir='.', selected_block_sizes=None):
     """Save IOPS results to CSV files."""
     
+    csv_dir = ensure_csv_directory(output_dir)
+    
     # Filter results by selected block sizes if specified
     if selected_block_sizes:
         filtered_results = {}
@@ -1019,7 +1030,7 @@ def save_results_to_files_iops(results, all_machines_results, output_dir='.', se
     
     for vm_name in vm_results.keys():
         filename = f"{vm_name}_iops_results.csv"
-        filepath = os.path.join(output_dir, filename)
+        filepath = os.path.join(csv_dir, filename)
         
         with open(filepath, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
@@ -1034,7 +1045,7 @@ def save_results_to_files_iops(results, all_machines_results, output_dir='.', se
     # Save aggregated results by operation
     for operation, block_sizes in all_machines_results.items():
         filename = f"{operation}_all_machines_iops_results.csv"
-        filepath = os.path.join(output_dir, filename)
+        filepath = os.path.join(csv_dir, filename)
         
         with open(filepath, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
@@ -1051,7 +1062,7 @@ def save_results_to_files_iops(results, all_machines_results, output_dir='.', se
     
     # Save combined aggregated results
     filename = "all_machines_iops_results.csv"
-    filepath = os.path.join(output_dir, filename)
+    filepath = os.path.join(csv_dir, filename)
     
     with open(filepath, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
@@ -1069,6 +1080,8 @@ def save_results_to_files_iops(results, all_machines_results, output_dir='.', se
 
 def save_job_summarized_results_iops(results, all_machines_results, output_dir='.', selected_block_sizes=None):
     """Save IOPS job summarized results to CSV files."""
+    
+    csv_dir = ensure_csv_directory(output_dir)
     
     # Filter results by selected block sizes if specified
     if selected_block_sizes:
@@ -1094,7 +1107,7 @@ def save_job_summarized_results_iops(results, all_machines_results, output_dir='
     
     for vm_name in vm_results.keys():
         filename = f"{vm_name}_iops_job_summary.csv"
-        filepath = os.path.join(output_dir, filename)
+        filepath = os.path.join(csv_dir, filename)
         
         with open(filepath, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
@@ -1108,7 +1121,7 @@ def save_job_summarized_results_iops(results, all_machines_results, output_dir='
     
     # Save all machines job summarized results
     filename = "all_machines_iops_job_summary.csv"
-    filepath = os.path.join(output_dir, filename)
+    filepath = os.path.join(csv_dir, filename)
     
     with open(filepath, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
@@ -1123,7 +1136,7 @@ def save_job_summarized_results_iops(results, all_machines_results, output_dir='
     for operation, block_sizes in all_machines_results.items():
         for block_size, iops_list in block_sizes.items():
             filename = f"all_machines_block_size_{block_size}_operation_{operation}_job_summary.csv"
-            filepath = os.path.join(output_dir, filename)
+            filepath = os.path.join(csv_dir, filename)
             
             with open(filepath, 'w', newline='') as csvfile:
                 writer = csv.writer(csvfile)
@@ -1150,8 +1163,9 @@ def create_graphs_from_job_summaries(output_dir='.', graph_type='bar', summary_o
         # Set matplotlib to use a non-interactive backend
         plt.switch_backend('Agg')
         
-        # Find all job summary CSV files
-        job_summary_files = glob.glob(os.path.join(output_dir, "all_machines_block_size_*_operation_*_job_summary.csv"))
+        # Find all job summary CSV files in the csv_files subdirectory
+        csv_dir = ensure_csv_directory(output_dir)
+        job_summary_files = glob.glob(os.path.join(csv_dir, "all_machines_block_size_*_operation_*_job_summary.csv"))
         
         if not job_summary_files:
             print("No block size + operation job summary files found to create graphs from.")
