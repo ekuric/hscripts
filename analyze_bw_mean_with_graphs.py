@@ -1504,12 +1504,12 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                     plt.tight_layout()
                     plt.subplots_adjust(right=0.7)  # Make room for legend and text boxes (increased space for totals)
                     
-                    # Generate PNG filename with block sizes, graph type, and data type included
+                    # Generate PNG filename with number of machines, block sizes, graph type, and data type included
                     block_sizes_str = '-'.join(block_sizes)
                     csv_basename = os.path.basename(csv_file)
                     graph_suffix = 'bar' if current_graph_type == 'bar' else 'line'
                     data_type_suffix = 'bw' if data_type == 'bandwidth' else 'iops'
-                    png_filename = csv_basename.replace('.csv', f'_comparison-{block_sizes_str}_average_{graph_suffix}_{data_type_suffix}.png')
+                    png_filename = f"{num_vms}_machines_{csv_basename.replace('.csv', f'_comparison-{block_sizes_str}_average_{graph_suffix}_{data_type_suffix}.png')}"
                     png_filepath = os.path.join(output_dir, png_filename)
                     
                     # Save the plot
