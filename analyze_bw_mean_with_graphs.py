@@ -114,15 +114,19 @@ def extract_fio_config_from_json(json_file_path):
     
     return config_data
 
-def format_fio_subtitle(config_data):
+def format_fio_subtitle(config_data, exclude_bs=False):
     """
     Format FIO configuration data into a subtitle string.
+    
+    Args:
+        config_data: Dictionary containing FIO configuration
+        exclude_bs: If True, exclude block size from subtitle (for comparison graphs)
     """
     subtitle_parts = []
     
     if config_data.get('size') != 'N/A':
         subtitle_parts.append(f"Size: {config_data['size']}")
-    if config_data.get('bs') != 'N/A':
+    if config_data.get('bs') != 'N/A' and not exclude_bs:
         subtitle_parts.append(f"BS: {config_data['bs']}")
     if config_data.get('runtime') != 'N/A':
         subtitle_parts.append(f"Runtime: {config_data['runtime']}s")
@@ -1422,13 +1426,14 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                         plt.axhline(y=block_average, color=colors[i], linestyle='--', linewidth=2, alpha=0.7)
                 
                     # Get FIO configuration for subtitle (use first block size as reference)
+                    # For comparison graphs, exclude block size since multiple block sizes are shown
                     subtitle = ""
                     if block_sizes:
                         # Use the first block size to get FIO config for subtitle
                         first_block_size = block_sizes[0]
                         config_key = (operation, first_block_size)
                         if config_key in FIO_CONFIGS:
-                            subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
+                            subtitle = format_fio_subtitle(FIO_CONFIGS[config_key], exclude_bs=True)
                     
                     # Customize the plot
                     num_vms = len(df_sorted)
@@ -1462,22 +1467,31 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                     # Add legend on the right side of the graph
                     plt.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), fontsize=10)
                     
-                    # Add average value text boxes below the legend
+                    # Add average and total value text boxes below the legend
                     for i, block_size in enumerate(block_sizes):
                         block_data = df_sorted[block_size]
                         block_average = block_data.mean()
+                        block_total = block_data.sum()
                         display_name = get_block_size_display_name(block_size)
                         
-                        # Set unit based on data type
+                        # Format text based on data type
                         if data_type == 'iops':
-                            unit_text = f'{display_name} Avg: {block_average:.1f} IOPS'
+                            avg_text = f'{display_name} Avg: {block_average:.1f} IOPS'
+                            total_text = f'{display_name} Total: {block_total:.0f} IOPS'
                         else:
-                            unit_text = f'{display_name} Avg: {block_average:.1f} KB'
+                            avg_text = f'{display_name} Avg: {block_average:.1f} KB'
+                            total_text = f'{display_name} Total: {block_total:.0f} KB'
                         
-                        # Position text boxes below the legend (right side)
-                        plt.text(1.02, 0.3 - (i * 0.08), unit_text, 
+                        # Position average text box
+                        plt.text(1.02, 0.3 - (i * 0.12), avg_text, 
                                 transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
                                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                                color=colors[i])
+                        
+                        # Position total text box below average
+                        plt.text(1.02, 0.3 - (i * 0.12) - 0.04, total_text, 
+                                transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
+                                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8),
                                 color=colors[i])
                     
                     # Add grid for better readability
@@ -1488,7 +1502,7 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                 
                     # Adjust layout to accommodate legend and text boxes on the right
                     plt.tight_layout()
-                    plt.subplots_adjust(right=0.75)  # Make room for legend and text boxes
+                    plt.subplots_adjust(right=0.7)  # Make room for legend and text boxes (increased space for totals)
                     
                     # Generate PNG filename with block sizes, graph type, and data type included
                     block_sizes_str = '-'.join(block_sizes)
