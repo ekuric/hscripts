@@ -9,6 +9,8 @@ CEPH_IMAGE="quay.io/ceph/ceph:v19"
 AUTHFILE="/var/lib/kubelet/config.json"
 DRY_RUN=false
 FORCE=false
+PARALLEL=false
+MAX_PARALLEL=5
 
 echo "=========================================="
 echo "Ceph Device Zapping Script for OpenShift"
@@ -23,12 +25,16 @@ show_usage() {
     echo "Options:"
     echo "  --dry-run          Show what would be done without executing"
     echo "  --force            Skip confirmation prompts"
+    echo "  --parallel         Run operations in parallel across nodes"
+    echo "  --max-parallel N   Maximum number of parallel operations (default: 5)"
     echo "  --help             Show this help message"
     echo ""
     echo "Examples:"
     echo "  $0                 # Interactive mode with confirmations"
     echo "  $0 --dry-run       # Show what would be done"
     echo "  $0 --force         # Skip confirmations"
+    echo "  $0 --parallel      # Run in parallel mode"
+    echo "  $0 --parallel --max-parallel 3  # Limit to 3 parallel operations"
     echo ""
 }
 
@@ -214,6 +220,9 @@ is_device_safe_to_zap() {
 }
 
 # Function to get list of storage devices on a node
+# Edit line #232 in case we want to include other devices in the list, or exclude other devices - nvme is most
+# likely to be the devices we want to zap.
+
 get_storage_devices() {
     local node=$1
     
@@ -254,13 +263,31 @@ zap_device() {
     fi
 }
 
-# Function to process a single node
-process_node() {
+# Function to process a single node (for parallel execution)
+process_node_parallel() {
     local node=$1
+    local log_file="/tmp/zap-ceph-devices-${node}.log"
     
-    echo "=========================================="
-    echo "Processing node: $node"
-    echo "=========================================="
+    {
+        echo "=========================================="
+        echo "Processing node: $node"
+        echo "=========================================="
+        echo "Log file: $log_file"
+        echo ""
+        
+        process_node_internal "$node"
+        
+        echo ""
+        echo "Node $node processing completed"
+        echo "=========================================="
+    } > "$log_file" 2>&1
+    
+    echo "Node $node processing completed (log: $log_file)"
+}
+
+# Function to process a single node (internal implementation)
+process_node_internal() {
+    local node=$1
     
     # Get list of storage devices on the node
     local devices
@@ -319,6 +346,66 @@ process_node() {
     done
     
     echo "Node $node summary: $success_count/$total_count devices zapped successfully"
+}
+
+# Function to process nodes in parallel
+process_nodes_parallel() {
+    local nodes=$1
+    local pids=()
+    local node_list=()
+    
+    echo "Starting parallel processing of nodes..."
+    echo "Maximum parallel operations: $MAX_PARALLEL"
+    echo ""
+    
+    # Convert nodes string to array
+    for node in $nodes; do
+        node_list+=("$node")
+    done
+    
+    # Process nodes in batches
+    local current_batch=0
+    local total_nodes=${#node_list[@]}
+    
+    for ((i=0; i<total_nodes; i++)); do
+        local node=${node_list[$i]}
+        
+        # Start processing this node in background
+        process_node_parallel "$node" &
+        local pid=$!
+        pids+=($pid)
+        
+        echo "Started processing node $node (PID: $pid)"
+        
+        # Wait if we've reached max parallel limit
+        if [ ${#pids[@]} -ge $MAX_PARALLEL ]; then
+            # Wait for any process to complete
+            wait -n
+            # Remove completed PIDs
+            local new_pids=()
+            for pid in "${pids[@]}"; do
+                if kill -0 "$pid" 2>/dev/null; then
+                    new_pids+=($pid)
+                fi
+            done
+            pids=("${new_pids[@]}")
+        fi
+    done
+    
+    # Wait for all remaining processes to complete
+    echo ""
+    echo "Waiting for all nodes to complete processing..."
+    for pid in "${pids[@]}"; do
+        wait "$pid"
+        echo "Process $pid completed"
+    done
+    
+    echo ""
+    echo "All parallel processing completed!"
+    echo "Check individual log files for detailed results:"
+    for node in "${node_list[@]}"; do
+        echo "  - /tmp/zap-ceph-devices-${node}.log"
+    done
 }
 
 # Function to get list of OpenShift nodes
@@ -393,6 +480,14 @@ main() {
                 FORCE=true
                 shift
                 ;;
+            --parallel)
+                PARALLEL=true
+                shift
+                ;;
+            --max-parallel)
+                MAX_PARALLEL="$2"
+                shift 2
+                ;;
             --help)
                 show_usage
                 exit 0
@@ -408,6 +503,8 @@ main() {
     echo "Configuration:"
     echo "  Dry run: $DRY_RUN"
     echo "  Force mode: $FORCE"
+    echo "  Parallel mode: $PARALLEL"
+    echo "  Max parallel: $MAX_PARALLEL"
     echo "  Ceph image: $CEPH_IMAGE"
     echo "  Auth file: $AUTHFILE"
     echo ""
@@ -447,14 +544,19 @@ main() {
     echo "Starting device zapping process..."
     echo "=========================================="
     
-    # Process each node
-    local total_success=0
-    local total_attempted=0
-    
-    for node in $nodes; do
-        process_node "$node"
-        echo ""
-    done
+    # Process nodes (parallel or sequential)
+    if [ "$PARALLEL" = true ]; then
+        process_nodes_parallel "$nodes"
+    else
+        # Sequential processing
+        local total_success=0
+        local total_attempted=0
+        
+        for node in $nodes; do
+            process_node_internal "$node"
+            echo ""
+        done
+    fi
     
     echo "=========================================="
     echo "Device zapping process completed!"
