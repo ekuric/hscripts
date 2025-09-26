@@ -1478,10 +1478,10 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                     max_value = df_sorted[block_sizes].max().max()
                     plt.ylim(0, max_value * 1.1)
                     
-                    # Add legend on the right side of the graph
-                    plt.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), fontsize=10)
+                    # Add legend on the right side of the graph (moved up to be more in line with graph)
+                    plt.legend(loc='center left', bbox_to_anchor=(1.02, 0.8), fontsize=10)
                     
-                    # Add average and total value text boxes below the legend
+                    # Add average and total value text boxes below the legend (moved up to be more in line with graph)
                     for i, block_size in enumerate(block_sizes):
                         block_data = df_sorted[block_size]
                         block_average = block_data.mean()
@@ -1496,14 +1496,14 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                             avg_text = f'{display_name} Avg: {block_average:.1f} KB'
                             total_text = f'{display_name} Total: {block_total:.0f} KB'
                         
-                        # Position average text box
-                        plt.text(1.02, 0.3 - (i * 0.12), avg_text, 
+                        # Position average text box (moved up from 0.3 to 0.6)
+                        plt.text(1.02, 0.6 - (i * 0.12), avg_text, 
                                 transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
                                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
                                 color=colors[i])
                         
-                        # Position total text box below average
-                        plt.text(1.02, 0.3 - (i * 0.12) - 0.04, total_text, 
+                        # Position total text box below average (moved up accordingly)
+                        plt.text(1.02, 0.6 - (i * 0.12) - 0.04, total_text, 
                                 transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
                                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8),
                                 color=colors[i])
