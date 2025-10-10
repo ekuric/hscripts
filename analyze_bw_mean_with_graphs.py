@@ -78,18 +78,23 @@ def get_block_size_display_name(block_size):
 def get_x_axis_labels_and_positions(df_sorted):
     """
     Determine X-axis labels and positions based on number of VMs.
-    Show every VM if <= 20, otherwise show every 30th VM.
+    Show every VM if <= 20, every 30th if <= 500, every 50th if > 500.
     """
     num_vms = len(df_sorted)
-    # If num_vms is <= 20, show every VM - check this 
+    
     if num_vms <= 20:
-        # Show every VM
+        # Show every VM for small datasets
         x_positions = range(num_vms)
         x_labels = [f'VM {i+1}' for i in x_positions]
         return x_positions, x_labels
-    else:
-        # Show every 30th VM for better visibility
+    elif num_vms <= 500:
+        # Show every 30th VM for medium datasets
         x_positions = range(0, num_vms, 30)
+        x_labels = [f'VM {i+1}' for i in x_positions]
+        return x_positions, x_labels
+    else:
+        # Show every 50th VM for large datasets (> 500 VMs)
+        x_positions = range(0, num_vms, 50)
         x_labels = [f'VM {i+1}' for i in x_positions]
         return x_positions, x_labels
 
