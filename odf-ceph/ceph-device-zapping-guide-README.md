@@ -382,40 +382,11 @@ oc debug node/NODE_NAME -- chroot /host ps aux | grep ceph
 1. **Monitor Progress**: Watch the output for any errors
 2. **Verify Safety**: Ensure only intended devices are being zapped
 3. **Check Node Health**: Monitor node health during execution
+4. **Check log files created in /tmp**: Log files are created in `/tmp` for every device touched by this script 
 
 ### After Execution
 1. **Verify Cleanup**: Check that devices are properly cleaned
 2. **Test ODF Installation**: Verify that ODF can be installed successfully
-3. **Monitor Cluster**: Watch for any remaining issues
-
-## Integration with Other Scripts
-
-### Complete ODF Cleanup Workflow
-```bash
-# 1. Remove ODF resources
-./remove-odf-resources.sh
-
-# 2. Zap Ceph devices
-./zap-ceph-devices.sh
-
-# 3. Clean remaining device data
-sudo ./cleanup-ceph-devices.sh
-
-# 4. Reinstall ODF
-oc apply -f odf-storagecluster.yaml
-```
-
-### OSD Metadata Issues
-```bash
-# 1. Diagnose OSD issues
-./diagnose-osd-issues.sh
-
-# 2. Clean OSD metadata
-./cleanup-osd-metadata.sh
-
-# 3. Zap devices if needed
-./zap-ceph-devices.sh
-```
 
 ## Security Considerations
 
