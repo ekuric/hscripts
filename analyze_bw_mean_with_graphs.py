@@ -92,9 +92,14 @@ def get_x_axis_labels_and_positions(df_sorted):
         x_positions = range(0, num_vms, 30)
         x_labels = [f'VM {i+1}' for i in x_positions]
         return x_positions, x_labels
-    else:
+    elif num_vms <= 1000:
         # Show every 50th VM for large datasets (> 500 VMs)
         x_positions = range(0, num_vms, 50)
+        x_labels = [f'VM {i+1}' for i in x_positions]
+        return x_positions, x_labels
+    else:
+        # Show every 100th VM for large datasets (> 500 VMs)
+        x_positions = range(0, num_vms, 100)
         x_labels = [f'VM {i+1}' for i in x_positions]
         return x_positions, x_labels
 
