@@ -102,6 +102,7 @@ def get_x_axis_labels_and_positions(df_sorted):
         x_positions = range(0, num_vms, 100)
         x_labels = [f'VM {i+1}' for i in x_positions]
         return x_positions, x_labels
+    
 
 def extract_fio_config_from_json(json_file_path):
     """
@@ -222,10 +223,10 @@ def extract_iops_from_json(json_file_path):
                 if iops_value > 0:  # Only include non-zero IOPS
                     iops_values.append(iops_value)
         
-        # Aggregate IOPS values (average them since they represent different jobs)
+        # Aggregate IOPS values (sum them since they represent total jobs per machine)
         if iops_values:
-            # Convert to integer to remove decimal places
-            iops_data[(operation, block_size)] = int(sum(iops_values) / len(iops_values))
+            # Sum all jobs to get total IOPS per machine
+            iops_data[(operation, block_size)] = int(sum(iops_values))
     
     except (json.JSONDecodeError, KeyError, FileNotFoundError) as e:
         print(f"Error processing {json_file_path}: {e}")
@@ -525,13 +526,21 @@ def write_operation_summary_csv_files(all_machines_results, selected_block_sizes
                     operation_results[operation][vm_name][block_size] = iops_value
             else:
                 # Bandwidth data - items are dictionaries with machine and bw_mean
+                # Group by machine and sum all jobs per machine
+                machine_groups = {}
                 for item in items:
-                    vm_name = item['machine']
-                    bw_mean = item['bw_mean']
+                    machine = item['machine']
+                    if machine not in machine_groups:
+                        machine_groups[machine] = []
+                    machine_groups[machine].append(item['bw_mean'])
+                
+                # Sum all jobs per machine and store the total
+                for vm_name, bw_values in machine_groups.items():
+                    total_bw = sum(bw_values) if bw_values else 0
                     
                     if vm_name not in operation_results[operation]:
                         operation_results[operation][vm_name] = {}
-                    operation_results[operation][vm_name][block_size] = bw_mean
+                    operation_results[operation][vm_name][block_size] = total_bw
     
     # Write CSV files for each operation
     csv_files_created = []
@@ -654,7 +663,7 @@ def save_job_summarized_results(results, all_machines_results, output_dir='.', s
             for operation in results[machine].keys():
                 for block_size in results[machine][operation].keys():
                     items = results[machine][operation][block_size]
-                    total_bw = sum(item['bw_mean'] for item in items) / len(items) if items else 0
+                    total_bw = sum(item['bw_mean'] for item in items) if items else 0
                     
                     f.write(f"{operation},{block_size},{total_bw}\n")
         print(f"Saved job-summarized results to: {filepath}")
@@ -676,7 +685,7 @@ def save_job_summarized_results(results, all_machines_results, output_dir='.', s
                 
                 # Calculate totals for each machine
                 for machine, items in machine_groups.items():
-                    total_bw = sum(item['bw_mean'] for item in items) / len(items) if items else 0
+                    total_bw = sum(item['bw_mean'] for item in items) if items else 0
                     
                     f.write(f"{operation},{block_size},{machine},{total_bw}\n")
     
@@ -704,7 +713,7 @@ def save_job_summarized_results(results, all_machines_results, output_dir='.', s
                 
                 # Calculate totals for each machine
                 for machine, items in machine_groups.items():
-                    total_bw = sum(item['bw_mean'] for item in items) / len(items) if items else 0
+                    total_bw = sum(item['bw_mean'] for item in items) if items else 0
                     
                     f.write(f"{machine},{total_bw}\n")
             
@@ -1230,11 +1239,11 @@ def create_single_graph(csv_file, graph_type, output_dir):
         if 'TotalIOPS' in df.columns:
             data_column = 'TotalIOPS'
             data_type = 'IOPS'
-            y_label = 'Total IOPS per machine'
+            y_label = 'Total IOPS per VM (sum of all jobs)'
         elif 'TotalBwMean' in df.columns:
             data_column = 'TotalBwMean'
             data_type = 'Bandwidth'
-            y_label = 'Total bw_mean per machine [KB]'
+            y_label = 'Total bw_mean per VM (sum of all jobs) [KB]'
         else:
             print(f"Skipping {csv_file}: Missing TotalIOPS or TotalBwMean column")
             return
@@ -1465,13 +1474,13 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                     
                     # Set title and Y-axis label based on data type
                     if data_type == 'iops':
-                        plt.title(f'IOPS Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
+                        plt.title(f'Total IOPS per VM Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
                                  fontsize=16, fontweight='bold', pad=20)
-                        plt.ylabel('Total IOPS per machine', fontsize=12, fontweight='bold')
+                        plt.ylabel('Total IOPS per VM (sum of all jobs)', fontsize=12, fontweight='bold')
                     else:
-                        plt.title(f'Bandwidth Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
+                        plt.title(f'Total Bandwidth per VM Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
                                  fontsize=16, fontweight='bold', pad=20)
-                        plt.ylabel('Total bw_mean per machine [KB]', fontsize=12, fontweight='bold')
+                        plt.ylabel('Total bw_mean per VM (sum of all jobs) [KB]', fontsize=12, fontweight='bold')
                     
                     # Add subtitle with FIO configuration
                     if subtitle:
@@ -1500,11 +1509,11 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                         
                         # Format text based on data type
                         if data_type == 'iops':
-                            avg_text = f'{display_name} Avg: {block_average:.1f} IOPS'
-                            total_text = f'{display_name} Total: {block_total:.0f} IOPS'
+                            avg_text = f'{display_name} Total per VM: {block_average:.1f} IOPS'
+                            total_text = f'{display_name} Total All VMs: {block_total:.0f} IOPS'
                         else:
-                            avg_text = f'{display_name} Avg: {block_average:.1f} KB'
-                            total_text = f'{display_name} Total: {block_total:.0f} KB'
+                            avg_text = f'{display_name} Total per VM: {block_average:.1f} KB'
+                            total_text = f'{display_name} Total All VMs: {block_total:.0f} KB'
                         
                         # Position average text box (moved up from 0.3 to 0.6)
                         plt.text(1.02, 0.6 - (i * 0.12), avg_text, 
