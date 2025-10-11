@@ -1497,10 +1497,10 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                     max_value = df_sorted[block_sizes].max().max()
                     plt.ylim(0, max_value * 1.1)
                     
-                    # Add legend on the right side of the graph (moved up to be more in line with graph)
-                    plt.legend(loc='center left', bbox_to_anchor=(1.02, 0.8), fontsize=10)
+                    # Add legend on the right side of the graph (aligned with top of graph)
+                    plt.legend(loc='center left', bbox_to_anchor=(1.02, 0.95), fontsize=10)
                     
-                    # Add average and total value text boxes below the legend (moved up to be more in line with graph)
+                    # Add average, total per VM, and total all VMs value text boxes below the legend
                     for i, block_size in enumerate(block_sizes):
                         block_data = df_sorted[block_size]
                         block_average = block_data.mean()
@@ -1509,20 +1509,28 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                         
                         # Format text based on data type
                         if data_type == 'iops':
-                            avg_text = f'{display_name} Total per VM: {block_average:.1f} IOPS'
-                            total_text = f'{display_name} Total All VMs: {block_total:.0f} IOPS'
+                            avg_text = f'{display_name} Average: {block_average:.1f} IOPS'
+                            total_per_vm_text = f'{display_name} Total per VM: {block_average:.1f} IOPS'
+                            total_all_vms_text = f'{display_name} Total All VMs: {block_total:.0f} IOPS'
                         else:
-                            avg_text = f'{display_name} Total per VM: {block_average:.1f} KB'
-                            total_text = f'{display_name} Total All VMs: {block_total:.0f} KB'
+                            avg_text = f'{display_name} Average: {block_average:.1f} KB'
+                            total_per_vm_text = f'{display_name} Total per VM: {block_average:.1f} KB'
+                            total_all_vms_text = f'{display_name} Total All VMs: {block_total:.0f} KB'
                         
-                        # Position average text box (moved up from 0.3 to 0.6)
-                        plt.text(1.02, 0.6 - (i * 0.12), avg_text, 
+                        # Position average text box (top)
+                        plt.text(1.02, 0.75 - (i * 0.16), avg_text, 
+                                transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
+                                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8),
+                                color=colors[i])
+                        
+                        # Position total per VM text box (middle)
+                        plt.text(1.02, 0.75 - (i * 0.16) - 0.04, total_per_vm_text, 
                                 transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
                                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
                                 color=colors[i])
                         
-                        # Position total text box below average (moved up accordingly)
-                        plt.text(1.02, 0.6 - (i * 0.12) - 0.04, total_text, 
+                        # Position total all VMs text box (bottom)
+                        plt.text(1.02, 0.75 - (i * 0.16) - 0.08, total_all_vms_text, 
                                 transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
                                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8),
                                 color=colors[i])
@@ -1535,7 +1543,7 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                 
                     # Adjust layout to accommodate legend and text boxes on the right
                     plt.tight_layout()
-                    plt.subplots_adjust(right=0.7)  # Make room for legend and text boxes (increased space for totals)
+                    plt.subplots_adjust(right=0.65)  # Make room for legend and text boxes (increased space for three boxes per block size)
                     
                     # Generate PNG filename with number of machines, block sizes, graph type, and data type included
                     block_sizes_str = '-'.join(block_sizes)
