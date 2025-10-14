@@ -1561,6 +1561,9 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                     print(f"Created operation summary graph: {png_filename}")
                     success_count += 1
                     
+                    # Create summary text file for this operation
+                    create_operation_summary_file(df_sorted, operation, block_sizes, data_type, output_dir)
+                    
                 except Exception as e:
                     print(f"Error creating operation summary graph for {csv_file}: {e}")
         
@@ -1573,6 +1576,59 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
     except Exception as e:
         print(f"Error in operation summary graph creation: {e}")
         return 0
+
+
+def create_operation_summary_file(df_sorted, operation, block_sizes, data_type, output_dir):
+    """
+    Create a text file with summary values for an operation.
+    
+    Args:
+        df_sorted: DataFrame with sorted data
+        operation: Operation name (read, write, randread, randwrite)
+        block_sizes: List of block sizes
+        data_type: 'iops' or 'bandwidth'
+        output_dir: Output directory path
+    """
+    try:
+        # Create filename
+        data_type_suffix = 'bw' if data_type == 'bandwidth' else 'iops'
+        txt_filename = f"{operation}_{data_type_suffix}.txt"
+        txt_filepath = os.path.join(output_dir, txt_filename)
+        
+        # Get number of machines from DataFrame
+        num_machines = len(df_sorted)
+        
+        # Open file for writing
+        with open(txt_filepath, 'w') as f:
+            f.write(f"Summary for {operation.upper()} operation ({data_type.upper()})\n")
+            f.write("=" * 50 + "\n")
+            f.write(f"Tested: {num_machines} machines in test\n\n")
+            
+            # Write values for each block size
+            for block_size in block_sizes:
+                block_data = df_sorted[block_size]
+                block_average = block_data.mean()
+                block_total = block_data.sum()
+                display_name = get_block_size_display_name(block_size)
+                
+                f.write(f"Block size: {display_name}\n")
+                
+                # Format values based on data type
+                if data_type == 'iops':
+                    f.write(f"  Average: {block_average:.1f} IOPS\n")
+                    f.write(f"  Total per VM: {block_average:.1f} IOPS\n")
+                    f.write(f"  Total All VMs: {block_total:.0f} IOPS\n")
+                else:
+                    f.write(f"  Average: {block_average:.1f} KB\n")
+                    f.write(f"  Total per VM: {block_average:.1f} KB\n")
+                    f.write(f"  Total All VMs: {block_total:.0f} KB\n")
+                
+                f.write("\n")  # Empty line between block sizes
+        
+        print(f"Created summary file: {txt_filename}")
+        
+    except Exception as e:
+        print(f"Error creating summary file for {operation}: {e}")
 
 
 if __name__ == "__main__":
