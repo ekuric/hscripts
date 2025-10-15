@@ -1590,13 +1590,13 @@ def create_operation_summary_file(df_sorted, operation, block_sizes, data_type, 
         output_dir: Output directory path
     """
     try:
-        # Create filename
-        data_type_suffix = 'bw' if data_type == 'bandwidth' else 'iops'
-        txt_filename = f"{operation}_{data_type_suffix}.txt"
-        txt_filepath = os.path.join(output_dir, txt_filename)
-        
         # Get number of machines from DataFrame
         num_machines = len(df_sorted)
+        
+        # Create filename with number of machines prefix
+        data_type_suffix = 'bw' if data_type == 'bandwidth' else 'iops'
+        txt_filename = f"{num_machines}machines_{operation}_{data_type_suffix}.txt"
+        txt_filepath = os.path.join(output_dir, txt_filename)
         
         # Open file for writing
         with open(txt_filepath, 'w') as f:
