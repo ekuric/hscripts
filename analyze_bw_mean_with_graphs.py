@@ -210,8 +210,9 @@ def extract_iops_from_json(json_file_path):
         config_key = (operation, block_size)
         FIO_CONFIGS[config_key] = config_data
         
-        # Collect all IOPS values for this operation across all jobs
+        # Collect all IOPS values and latency data for this operation across all jobs
         iops_values = []
+        latency_values = []
         
         for job in data['jobs']:
             # For randread, the data is stored under 'read' key
@@ -222,11 +223,26 @@ def extract_iops_from_json(json_file_path):
                 iops_value = job[data_key]['iops_mean']
                 if iops_value > 0:  # Only include non-zero IOPS
                     iops_values.append(iops_value)
+                    
+                    # Extract latency data if available
+                    if 'lat_ns' in job[data_key] and 'mean' in job[data_key]['lat_ns']:
+                        latency_ns = job[data_key]['lat_ns']['mean']
+                        latency_ms = latency_ns / 1000000  # Convert nanoseconds to milliseconds
+                        latency_values.append(latency_ms)
         
         # Aggregate IOPS values (sum them since they represent total jobs per machine)
         if iops_values:
             # Sum all jobs to get total IOPS per machine
-            iops_data[(operation, block_size)] = int(sum(iops_values))
+            total_iops = int(sum(iops_values))
+            
+            # Calculate average latency across all jobs
+            avg_latency_ms = sum(latency_values) / len(latency_values) if latency_values else 0
+            
+            # Store both IOPS and latency data
+            iops_data[(operation, block_size)] = {
+                'total_iops': total_iops,
+                'avg_latency_ms': avg_latency_ms
+            }
     
     except (json.JSONDecodeError, KeyError, FileNotFoundError) as e:
         print(f"Error processing {json_file_path}: {e}")
@@ -241,6 +257,7 @@ def extract_bw_mean_from_json(file_path):
             data = json.load(f)
         
         bw_values = []
+        latency_values = []
 
         # Extract FIO parameters for subtitle
         fio_params = {}
@@ -274,6 +291,12 @@ def extract_bw_mean_from_json(file_path):
                             'bw_mean': int(bw_mean_val),
                             'job_name': job.get('jobname', 'unknown')
                         })
+                        
+                        # Extract latency data if available
+                        if 'lat_ns' in job[data_key] and 'mean' in job[data_key]['lat_ns']:
+                            latency_ns = job[data_key]['lat_ns']['mean']
+                            latency_ms = latency_ns / 1000000  # Convert nanoseconds to milliseconds
+                            latency_values.append(latency_ms)
         
         # Also search for bw_mean in the entire JSON structure
         json_str = json.dumps(data)
@@ -297,6 +320,13 @@ def extract_bw_mean_from_json(file_path):
 
         # Extract FIO configuration for subtitles
         config_data = extract_fio_config_from_json(file_path)
+        
+        # Calculate average latency if we have latency data
+        avg_latency_ms = sum(latency_values) / len(latency_values) if latency_values else 0
+        
+        # Add latency data to each bandwidth entry
+        for bw_entry in bw_values:
+            bw_entry['avg_latency_ms'] = avg_latency_ms
         
         return bw_values, config_data
     
@@ -367,16 +397,17 @@ def analyze_all_directories(input_dir='.'):
                 for bw_data in bw_values:
                     # Store per machine
                     results[directory][operation][block_size].append({
-
                         'bw_mean': bw_data['bw_mean'],
-                        'job_name': bw_data['job_name']
+                        'job_name': bw_data['job_name'],
+                        'avg_latency_ms': bw_data.get('avg_latency_ms', 0)
                     })
                     
                     # Store for all machines aggregation
                     all_machines_results[operation][block_size].append({
                         'machine': directory,
                         'bw_mean': bw_data['bw_mean'],
-                        'job_name': bw_data['job_name']
+                        'job_name': bw_data['job_name'],
+                        'avg_latency_ms': bw_data.get('avg_latency_ms', 0)
                     })
             else:
 
@@ -427,7 +458,13 @@ def generate_report(results, all_machines_results):
             print("-" * 30)
             print(f"  Operation: {operation}")
             print(f"    Block Size: {block_size}")
-            print(f"      Value: {value:.2f}")
+            if isinstance(value, dict):
+                # New structure with latency data
+                print(f"      Total IOPS: {value.get('total_iops', 0):.0f}")
+                print(f"      Avg Latency: {value.get('avg_latency_ms', 0):.2f} ms")
+            else:
+                # Old structure (backward compatibility)
+                print(f"      Value: {value:.2f}")
     else:
         # Bandwidth results structure: {machine: {operation: {block_size: value}}}
         for machine in sorted(results.keys()):
@@ -518,12 +555,19 @@ def write_operation_summary_csv_files(all_machines_results, selected_block_sizes
         for block_size, items in block_data.items():
             # Check if items are IOPS (integers) or bandwidth (dictionaries)
             if items and isinstance(items[0], (int, float)):
-                # IOPS data - items are direct values, need to create VM names
+                # IOPS data - items are direct values (old structure), need to create VM names
                 for i, iops_value in enumerate(items):
                     vm_name = f"VM-{i+1}"  # Create VM names for IOPS data
                     if vm_name not in operation_results[operation]:
                         operation_results[operation][vm_name] = {}
                     operation_results[operation][vm_name][block_size] = iops_value
+            elif items and isinstance(items[0], dict) and 'total_iops' in items[0]:
+                # IOPS data - new structure with latency data
+                for i, iops_data in enumerate(items):
+                    vm_name = f"VM-{i+1}"  # Create VM names for IOPS data
+                    if vm_name not in operation_results[operation]:
+                        operation_results[operation][vm_name] = {}
+                    operation_results[operation][vm_name][block_size] = iops_data.get('total_iops', 0)
             else:
                 # Bandwidth data - items are dictionaries with machine and bw_mean
                 # Group by machine and sum all jobs per machine
@@ -848,12 +892,28 @@ Examples:
                     else:
                         print(f"\nCreating {args.graph_type} graphs...")
                     create_graphs_from_job_summaries(output_dir, args.graph_type, args.summary_only)
+                    
+                    # Create latency correlation graph
+                    print(f"\nCreating latency correlation graph...")
+                    create_latency_performance_correlation_graph(all_machines_results, output_dir, 'iops')
+                    
+                    # Save latency data to files
+                    print(f"\nSaving latency data to files...")
+                    save_latency_data_to_files(all_machines_results, output_dir, 'iops')
             else:
                 # Generate report
                 generate_report(results, all_machines_results)
                 
                 # Save results to files
                 save_results_to_files_iops(results, all_machines_results, output_dir, selected_block_sizes)
+                
+                # Create latency correlation graph
+                print(f"\nCreating latency correlation graph...")
+                create_latency_performance_correlation_graph(all_machines_results, output_dir, 'iops')
+                
+                # Save latency data to files
+                print(f"\nSaving latency data to files...")
+                save_latency_data_to_files(all_machines_results, output_dir, 'iops')
                 
                 # Save job summarized results
                 save_job_summarized_results_iops(results, all_machines_results, output_dir, selected_block_sizes)
@@ -899,12 +959,28 @@ Examples:
                     else:
                         print(f"\nCreating {args.graph_type} graphs...")
                     create_graphs_from_job_summaries(output_dir, args.graph_type, args.summary_only)
+                    
+                    # Create latency correlation graph
+                    print(f"\nCreating latency correlation graph...")
+                    create_latency_performance_correlation_graph(all_machines_results, output_dir, 'bandwidth')
+                    
+                    # Save latency data to files
+                    print(f"\nSaving latency data to files...")
+                    save_latency_data_to_files(all_machines_results, output_dir, 'bandwidth')
             else:
                 # Generate report
                 generate_report(results, all_machines_results)
                 
                 # Save results to files
                 save_results_to_files(results, all_machines_results, output_dir, selected_block_sizes)
+                
+                # Create latency correlation graph
+                print(f"\nCreating latency correlation graph...")
+                create_latency_performance_correlation_graph(all_machines_results, output_dir, 'bandwidth')
+                
+                # Save latency data to files
+                print(f"\nSaving latency data to files...")
+                save_latency_data_to_files(all_machines_results, output_dir, 'bandwidth')
                 
                 # Save job summarized results
                 save_job_summarized_results(results, all_machines_results, output_dir, selected_block_sizes)
@@ -1015,7 +1091,12 @@ def analyze_all_directories_iops(input_dir='.'):
         
         # Group by operation and block size for aggregated results
         for (vm_name, operation, block_size), iops in vm_results.items():
-            all_machines_results[operation][block_size].append(iops)
+            # Store with machine name for latency correlation graphs
+            all_machines_results[operation][block_size].append({
+                'machine': vm_name,
+                'total_iops': iops['total_iops'],
+                'avg_latency_ms': iops['avg_latency_ms']
+            })
             print(f"  Processing: {vm_name} (op: {operation}, bs: {block_size})")
     
     return all_results, all_machines_results
@@ -1057,7 +1138,13 @@ def save_results_to_files_iops(results, all_machines_results, output_dir='.', se
             
             for operation in sorted(vm_results[vm_name].keys()):
                 for block_size in sorted(vm_results[vm_name][operation].keys()):
-                    writer.writerow([operation, block_size, vm_results[vm_name][operation][block_size]])
+                    iops_data = vm_results[vm_name][operation][block_size]
+                    if isinstance(iops_data, dict):
+                        # New structure with latency data
+                        writer.writerow([operation, block_size, iops_data.get('total_iops', 0)])
+                    else:
+                        # Old structure (backward compatibility)
+                        writer.writerow([operation, block_size, iops_data])
         
         print(f"Saved per-machine results to: {filepath}")
     
@@ -1071,11 +1158,22 @@ def save_results_to_files_iops(results, all_machines_results, output_dir='.', se
             writer.writerow(['BlockSize', 'TotalIOPS', 'MinIOPS', 'MaxIOPS', 'MeanIOPS'])
             
             for block_size, iops_list in block_sizes.items():
-                total_iops = sum(iops_list)
-                min_iops = min(iops_list)
-                max_iops = max(iops_list)
-                mean_iops = sum(iops_list) / len(iops_list)
-                writer.writerow([block_size, total_iops, min_iops, max_iops, mean_iops])
+                # Extract IOPS values from the new data structure
+                iops_values = []
+                for iops_data in iops_list:
+                    if isinstance(iops_data, dict):
+                        # New structure with latency data
+                        iops_values.append(iops_data.get('total_iops', 0))
+                    else:
+                        # Old structure (backward compatibility)
+                        iops_values.append(iops_data)
+                
+                if iops_values:
+                    total_iops = sum(iops_values)
+                    min_iops = min(iops_values)
+                    max_iops = max(iops_values)
+                    mean_iops = sum(iops_values) / len(iops_values)
+                    writer.writerow([block_size, total_iops, min_iops, max_iops, mean_iops])
         
         print(f"Saved {operation} aggregated results to: {filepath}")
     
@@ -1089,11 +1187,22 @@ def save_results_to_files_iops(results, all_machines_results, output_dir='.', se
         
         for operation, block_sizes in all_machines_results.items():
             for block_size, iops_list in block_sizes.items():
-                total_iops = sum(iops_list)
-                min_iops = min(iops_list)
-                max_iops = max(iops_list)
-                mean_iops = sum(iops_list) / len(iops_list)
-                writer.writerow([operation, block_size, total_iops, min_iops, max_iops, mean_iops])
+                # Extract IOPS values from the new data structure
+                iops_values = []
+                for iops_data in iops_list:
+                    if isinstance(iops_data, dict):
+                        # New structure with latency data
+                        iops_values.append(iops_data.get('total_iops', 0))
+                    else:
+                        # Old structure (backward compatibility)
+                        iops_values.append(iops_data)
+                
+                if iops_values:
+                    total_iops = sum(iops_values)
+                    min_iops = min(iops_values)
+                    max_iops = max(iops_values)
+                    mean_iops = sum(iops_values) / len(iops_values)
+                    writer.writerow([operation, block_size, total_iops, min_iops, max_iops, mean_iops])
     
     print(f"Saved combined aggregated results to: {filepath}")
 
@@ -1134,7 +1243,13 @@ def save_job_summarized_results_iops(results, all_machines_results, output_dir='
             
             for operation in sorted(vm_results[vm_name].keys()):
                 for block_size in sorted(vm_results[vm_name][operation].keys()):
-                    writer.writerow([operation, block_size, vm_results[vm_name][operation][block_size]])
+                    iops_data = vm_results[vm_name][operation][block_size]
+                    if isinstance(iops_data, dict):
+                        # New structure with latency data
+                        writer.writerow([operation, block_size, iops_data.get('total_iops', 0)])
+                    else:
+                        # Old structure (backward compatibility)
+                        writer.writerow([operation, block_size, iops_data])
         
         print(f"Saved job-summarized results to: {filepath}")
     
@@ -1147,7 +1262,12 @@ def save_job_summarized_results_iops(results, all_machines_results, output_dir='
         writer.writerow(['Machine', 'TotalIOPS'])
         
         for (vm_name, operation, block_size), iops in results.items():
-            writer.writerow([vm_name, iops])
+            if isinstance(iops, dict):
+                # New structure with latency data
+                writer.writerow([vm_name, iops.get('total_iops', 0)])
+            else:
+                # Old structure (backward compatibility)
+                writer.writerow([vm_name, iops])
     
     print(f"Saved all machines job-summarized results to: {filepath}")
     
@@ -1162,7 +1282,12 @@ def save_job_summarized_results_iops(results, all_machines_results, output_dir='
                 writer.writerow(['Machine', 'TotalIOPS'])
                 
                 for i, iops in enumerate(iops_list):
-                    writer.writerow([f"VM-{i+1}", iops])
+                    if isinstance(iops, dict):
+                        # New structure with latency data
+                        writer.writerow([f"VM-{i+1}", iops.get('total_iops', 0)])
+                    else:
+                        # Old structure (backward compatibility)
+                        writer.writerow([f"VM-{i+1}", iops])
             
             print(f"Saved job-summarized results to: {filepath}")
 
@@ -1281,17 +1406,9 @@ def create_single_graph(csv_file, graph_type, output_dir):
         if data_type == 'IOPS':
             plt.axhline(y=average_data, color='red', linestyle='--', linewidth=2, alpha=0.8, 
                        label=f'Average: {average_data:.1f} IOPS')
-            # Add text annotation for the average value
-            plt.text(0.02, 0.98, f'Average IOPS: {average_data:.1f}', 
-                    transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
-                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
         else:
             plt.axhline(y=average_data, color='red', linestyle='--', linewidth=2, alpha=0.8, 
                        label=f'Average: {average_data:.1f} KB')
-            # Add text annotation for the average value
-            plt.text(0.02, 0.98, f'Average BW: {average_data:.1f} KB', 
-                    transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
-                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
                 
         # Customize the plot
         plt.ylabel(y_label, fontsize=10, fontweight='bold')
@@ -1317,11 +1434,11 @@ def create_single_graph(csv_file, graph_type, output_dir):
                 num_vms = len(df)
                 chart_type = "Bar Chart" if graph_type == 'bar' else "Line Chart"
                 plt.title(f'{data_type} Performance ({chart_type}): {operation.upper()} - {block_size.upper()} Block Size ({num_vms} VMs)', 
-                         fontsize=16, fontweight='bold', pad=20)
+                         fontsize=16, fontweight='bold', pad=30)
                 
                 # Add subtitle with FIO configuration
                 if subtitle:
-                    plt.suptitle(subtitle, fontsize=10, y=0.93, ha='center', va='top')
+                    plt.figtext(0.5, 0.92, subtitle, fontsize=10, ha='center', va='top')
                 else:
                     plt.title(csv_file.replace('_job_summary.csv', ''), fontsize=14, fontweight='bold')
         else:
@@ -1475,16 +1592,19 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                     # Set title and Y-axis label based on data type
                     if data_type == 'iops':
                         plt.title(f'Total IOPS per VM Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
-                                 fontsize=16, fontweight='bold', pad=20)
+                                 fontsize=16, fontweight='bold', pad=40)
                         plt.ylabel('Total IOPS per VM (sum of all jobs)', fontsize=12, fontweight='bold')
                     else:
                         plt.title(f'Total Bandwidth per VM Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
-                                 fontsize=16, fontweight='bold', pad=20)
+                                 fontsize=16, fontweight='bold', pad=40)
                         plt.ylabel('Total bw_mean per VM (sum of all jobs) [KB]', fontsize=12, fontweight='bold')
                     
                     # Add subtitle with FIO configuration
                     if subtitle:
-                        plt.suptitle(subtitle, fontsize=10, y=0.93, ha='center', va='top')
+                        # Position subtitle in the center of the graph area (not the entire figure)
+                        # Since we have right=0.65, the graph area is from 0 to 0.65, so center is at 0.325
+                        # Position below the title (which has pad=40), so subtitle goes at 0.88 to be below title
+                        plt.figtext(0.325, 0.88, subtitle, fontsize=10, ha='center', va='top')
                     
                     # Set X-axis label
                     plt.xlabel('VM Index', fontsize=12, fontweight='bold')
@@ -1543,7 +1663,7 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                 
                     # Adjust layout to accommodate legend and text boxes on the right
                     plt.tight_layout()
-                    plt.subplots_adjust(right=0.65)  # Make room for legend and text boxes (increased space for three boxes per block size)
+                    plt.subplots_adjust(right=0.65, top=0.85)  # Make room for legend and text boxes, and increase top margin for subtitle
                     
                     # Generate PNG filename with number of machines, block sizes, graph type, and data type included
                     block_sizes_str = '-'.join(block_sizes)
@@ -1575,6 +1695,338 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
         return 0
     except Exception as e:
         print(f"Error in operation summary graph creation: {e}")
+        return 0
+
+
+def create_latency_performance_correlation_graph(all_machines_results, output_dir='.', data_type='iops'):
+    """
+    Create latency vs performance correlation graphs.
+    Creates separate graphs for each operation, with subplots for different block sizes.
+    X-axis: Performance (IOPS or bandwidth) per VM
+    Y-axis: Average latency in milliseconds
+    Each dot represents a VM's performance vs latency.
+    
+    Args:
+        all_machines_results: Dictionary with aggregated results from all machines
+        output_dir: Output directory for the graph
+        data_type: 'iops' or 'bandwidth'
+    
+    Returns:
+        Success count (number of graphs created successfully)
+    """
+    try:
+        import matplotlib.pyplot as plt
+        import numpy as np
+        
+        
+        # Set matplotlib to use a non-interactive backend
+        plt.switch_backend('Agg')
+        
+        if not all_machines_results:
+            print("ERROR: No data available for latency correlation graph")
+            return 0
+        
+        print(f"Creating latency correlation graphs for {data_type} data...")
+        
+        # Group data by operation and block size
+        operations = set()
+        block_sizes = set()
+        
+        for operation, block_data in all_machines_results.items():
+            operations.add(operation)
+            for block_size in block_data.keys():
+                block_sizes.add(block_size)
+        
+        operations = sorted(operations)
+        block_sizes = sorted(block_sizes, key=lambda x: int(x.replace('k', '')))
+        
+        print(f"Found operations: {operations}")
+        print(f"Found block sizes: {block_sizes}")
+        
+        if len(operations) == 0:
+            print("ERROR: No operations found in data")
+            return 0
+        
+        success_count = 0
+        
+        # Create a separate graph for each operation
+        for operation in operations:
+            print(f"Processing operation: {operation}")
+            
+            # Get block sizes available for this operation
+            op_block_sizes = [bs for bs in block_sizes 
+                            if operation in all_machines_results and bs in all_machines_results[operation]]
+            
+            if not op_block_sizes:
+                print(f"No block sizes found for operation {operation}")
+                continue
+            
+            print(f"Block sizes for {operation}: {op_block_sizes}")
+            
+            # Create subplots for each block size of this operation
+            num_block_sizes = len(op_block_sizes)
+            cols = min(3, num_block_sizes)  # Max 3 columns
+            rows = (num_block_sizes + cols - 1) // cols
+            
+            print(f"Creating subplot layout: {rows}x{cols} for {num_block_sizes} block sizes")
+            
+            # Increase figure height to accommodate title and subtitle
+            fig_height = 4*rows + 1.5  # Add extra height for title and subtitle
+            fig, axes = plt.subplots(rows, cols, figsize=(5*cols, fig_height))
+            
+            # Ensure axes is always a list for consistent indexing
+            if num_block_sizes == 1:
+                axes = [axes]
+            elif rows == 1 and cols == 1:
+                axes = [axes]
+            elif rows == 1:
+                # Single row, multiple columns - axes is already a list
+                axes = list(axes) if hasattr(axes, '__iter__') else [axes]
+            else:
+                # Multiple rows - flatten the 2D array
+                axes = axes.flatten()
+            
+            # Use a single color for this operation (since all subplots are the same operation)
+            color = plt.cm.Set1(operations.index(operation) / len(operations))
+            
+            for bs_idx, block_size in enumerate(op_block_sizes):
+                print(f"Processing block size: {block_size}")
+                ax = axes[bs_idx]
+                
+                data = all_machines_results[operation][block_size]
+                print(f"Data points for {operation}-{block_size}: {len(data)}")
+                
+                # Extract performance and latency data from the list of items
+                performance_values = []
+                latency_values = []
+                
+                for item in data:
+                    if data_type == 'iops':
+                        if isinstance(item, dict) and 'total_iops' in item and 'avg_latency_ms' in item:
+                            performance_values.append(item['total_iops'])
+                            latency_values.append(item['avg_latency_ms'])
+                    else:  # bandwidth
+                        if isinstance(item, dict) and 'bw_mean' in item and 'avg_latency_ms' in item:
+                            performance_values.append(item['bw_mean'])
+                            latency_values.append(item['avg_latency_ms'])
+                
+                if performance_values and latency_values:
+                    # For large datasets (>1000 points), use smaller markers and lower alpha for better performance
+                    num_points = len(performance_values)
+                    if num_points > 1000:
+                        marker_size = max(10, 60 - (num_points - 1000) // 100)  # Reduce size for large datasets
+                        alpha = max(0.3, 0.7 - (num_points - 1000) // 2000)  # Reduce alpha for large datasets
+                        
+                        # For very large datasets (>5000 points), sample the data to prevent memory issues
+                        if num_points > 5000:
+                            step = num_points // 5000
+                            performance_values = performance_values[::step]
+                            latency_values = latency_values[::step]
+                            num_points = len(performance_values)
+                    else:
+                        marker_size = 60
+                        alpha = 0.7
+                    
+                    # Create scatter plot
+                    ax.scatter(performance_values, latency_values, 
+                              color=color, alpha=alpha, s=marker_size,
+                              edgecolors='black', linewidth=0.5)
+                    
+                    # Set reasonable axis limits
+                    if performance_values:
+                        ax.set_xlim(0, max(performance_values) * 1.1)
+                    if latency_values:
+                        ax.set_ylim(0, max(latency_values) * 1.1)
+                    
+                    # Format X-axis labels for better readability with large numbers
+                    def format_large_numbers(x, pos):
+                        if x >= 1e6:
+                            return f'{x/1e6:.1f}M'
+                        elif x >= 1e4:  # Only use K format for numbers >= 10,000
+                            return f'{x/1e3:.0f}K'
+                        else:
+                            return f'{x:.0f}'
+                    
+                    ax.xaxis.set_major_formatter(plt.FuncFormatter(format_large_numbers))
+                
+                # Customize subplot
+                metric_name = 'IOPS' if data_type == 'iops' else 'Bandwidth (KB/s)'
+                ax.set_xlabel(f'Total {metric_name} per VM', fontsize=10, fontweight='bold')
+                ax.set_ylabel('Average Latency (ms)', fontsize=10, fontweight='bold')
+                ax.set_title(f'Block Size: {block_size}', fontsize=12, fontweight='bold')
+                ax.grid(True, alpha=0.3)
+            
+            # Hide unused subplots
+            for idx in range(num_block_sizes, len(axes)):
+                axes[idx].set_visible(False)
+            
+            # Calculate number of machines from the data
+            num_machines = 0
+            if op_block_sizes and operation in all_machines_results:
+                # Get the first available block size to count unique machines
+                first_bs = op_block_sizes[0]
+                if first_bs in all_machines_results[operation]:
+                    # Count unique machine names, not total data points
+                    unique_machines = set()
+                    for data_point in all_machines_results[operation][first_bs]:
+                        if 'machine' in data_point:
+                            unique_machines.add(data_point['machine'])
+                    num_machines = len(unique_machines)
+            
+            print(f"Calculated {num_machines} unique machines for {operation}")
+            
+            # Get FIO configuration for subtitle (use first available block size)
+            subtitle = ""
+            if op_block_sizes:
+                first_bs = op_block_sizes[0]
+                config_key = (operation, first_bs)
+                if config_key in FIO_CONFIGS:
+                    subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
+            
+            # Set main title
+            metric_name = 'IOPS' if data_type == 'iops' else 'Bandwidth'
+            fig.suptitle(f'{operation.upper()} - Latency vs {metric_name} Performance Correlation ({num_machines} VMs)',
+                        fontsize=16, fontweight='bold', y=0.95)
+            
+            # Add subtitle with FIO configuration
+            if subtitle:
+                plt.figtext(0.5, 0.85, subtitle, fontsize=10, ha='center', va='top')
+            
+            # Adjust layout to ensure title and subtitle don't overlap
+            plt.tight_layout()
+            # Add more space between rows when there are multiple rows
+            if rows > 1:
+                plt.subplots_adjust(top=0.75, hspace=0.4)  # Increased space for title/subtitle and between rows
+            else:
+                plt.subplots_adjust(top=0.75)  # Increased space for title and subtitle
+            
+            # Save the plot
+            graph_suffix = 'latency_correlation'
+            data_type_suffix = 'bw' if data_type == 'bandwidth' else 'iops'
+            png_filename = f"{graph_suffix}_{operation}_{data_type_suffix}.png"
+            png_filepath = os.path.join(output_dir, png_filename)
+            
+            # Ensure output directory exists
+            os.makedirs(output_dir, exist_ok=True)
+            
+            print(f"Saving graph to: {png_filepath}")
+            plt.savefig(png_filepath, dpi=300, bbox_inches='tight', 
+                       facecolor='white', edgecolor='none')
+            plt.close()
+            
+            print(f"Successfully created latency correlation graph: {png_filename}")
+            success_count += 1
+        
+        print(f"Latency correlation graph creation complete. Created {success_count} graphs.")
+        return success_count
+        
+    except ImportError as e:
+        print(f"Error importing required libraries: {e}")
+        print("Please install required dependencies: pip install matplotlib pandas numpy")
+        return 0
+    except Exception as e:
+        print(f"Error creating latency correlation graph: {e}")
+        import traceback
+        print(f"Full traceback: {traceback.format_exc()}")
+        return 0
+
+
+def save_latency_data_to_files(all_machines_results, output_dir='.', data_type='iops'):
+    """
+    Save latency data for each machine to text files in a latencydata directory.
+    Creates separate files for each operation and block size combination.
+    
+    Args:
+        all_machines_results: Dictionary with aggregated results from all machines
+        output_dir: Output directory for the latency data files
+        data_type: 'iops' or 'bandwidth'
+    
+    Returns:
+        Success count (number of files created successfully)
+    """
+    try:
+        import os
+        
+        # Create latencydata directory
+        latency_dir = os.path.join(output_dir, 'latencydata')
+        os.makedirs(latency_dir, exist_ok=True)
+        
+        success_count = 0
+        
+        if not all_machines_results:
+            print("No data available for latency extraction")
+            return 0
+        
+        operations = sorted(set(all_machines_results.keys()))
+        print(f"Extracting latency data for operations: {operations}")
+        
+        for operation in operations:
+            op_block_sizes = sorted([bs for bs in all_machines_results[operation].keys() if all_machines_results[operation][bs]], 
+                                   key=lambda x: int(x.replace('k', '')))
+            
+            if not op_block_sizes:
+                print(f"No block sizes found for operation {operation}")
+                continue
+            
+            print(f"Processing operation: {operation}")
+            print(f"Block sizes for {operation}: {op_block_sizes}")
+            
+            for block_size in op_block_sizes:
+                data = all_machines_results[operation][block_size]
+                
+                if not data:
+                    print(f"No data found for {operation}-{block_size}")
+                    continue
+                
+                # Extract latency data for each machine
+                machine_latency_data = []
+                for item in data:
+                    if isinstance(item, dict) and 'avg_latency_ms' in item and 'machine' in item:
+                        machine_latency_data.append({
+                            'machine': item['machine'],
+                            'avg_latency_ms': item['avg_latency_ms']
+                        })
+                
+                if not machine_latency_data:
+                    print(f"No valid latency data found for {operation}-{block_size}")
+                    continue
+                
+                # Sort by machine name for consistent output
+                machine_latency_data.sort(key=lambda x: x['machine'])
+                
+                # Create nested directory structure: latencydata/operation/block_size.txt
+                operation_dir = os.path.join(latency_dir, operation)
+                os.makedirs(operation_dir, exist_ok=True)
+                
+                # Create filename
+                data_type_suffix = 'bw' if data_type == 'bandwidth' else 'iops'
+                filename = f"{block_size}_{data_type_suffix}.txt"
+                filepath = os.path.join(operation_dir, filename)
+                
+                # Write latency data to file
+                try:
+                    with open(filepath, 'w') as f:
+                        f.write(f"Latency Data for {operation.upper()} - Block Size: {block_size.upper()}\n")
+                        f.write(f"Data Type: {data_type.upper()}\n")
+                        f.write(f"Number of machines: {len(machine_latency_data)}\n")
+                        f.write("=" * 60 + "\n\n")
+                        
+                        for item in machine_latency_data:
+                            f.write(f"Machine: {item['machine']}\n")
+                            f.write(f"Average Latency: {item['avg_latency_ms']:.3f} ms\n")
+                            f.write("-" * 40 + "\n")
+                    
+                    print(f"Saved latency data to: {filepath}")
+                    success_count += 1
+                    
+                except Exception as e:
+                    print(f"Error writing file {filepath}: {e}")
+        
+        print(f"Latency data extraction complete. Created {success_count} files.")
+        return success_count
+        
+    except Exception as e:
+        print(f"Error in save_latency_data_to_files: {e}")
         return 0
 
 
