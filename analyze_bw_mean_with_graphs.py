@@ -219,16 +219,18 @@ def extract_iops_from_json(json_file_path):
             # For randwrite, the data is stored under 'write' key
             data_key = 'read' if operation in ['read', 'randread'] else 'write'
             
-            if data_key in job and 'iops_mean' in job[data_key]:
-                iops_value = job[data_key]['iops_mean']
-                if iops_value > 0:  # Only include non-zero IOPS
-                    iops_values.append(iops_value)
-                    
-                    # Extract latency data if available
-                    if 'lat_ns' in job[data_key] and 'mean' in job[data_key]['lat_ns']:
-                        latency_ns = job[data_key]['lat_ns']['mean']
-                        latency_ms = latency_ns / 1000000  # Convert nanoseconds to milliseconds
-                        latency_values.append(latency_ms)
+            if data_key in job:
+                # Extract IOPS data (only non-zero values)
+                if 'iops_mean' in job[data_key]:
+                    iops_value = job[data_key]['iops_mean']
+                    if iops_value > 0:  # Only include non-zero IOPS
+                        iops_values.append(iops_value)
+                
+                # Extract latency data independently (regardless of IOPS value)
+                if 'lat_ns' in job[data_key] and 'mean' in job[data_key]['lat_ns']:
+                    latency_ns = job[data_key]['lat_ns']['mean']
+                    latency_ms = latency_ns / 1000000  # Convert nanoseconds to milliseconds
+                    latency_values.append(latency_ms)
         
         # Aggregate IOPS values (sum them since they represent total jobs per machine)
         if iops_values:
@@ -1284,7 +1286,8 @@ def save_job_summarized_results_iops(results, all_machines_results, output_dir='
                 for i, iops in enumerate(iops_list):
                     if isinstance(iops, dict):
                         # New structure with latency data
-                        writer.writerow([f"VM-{i+1}", iops.get('total_iops', 0)])
+                        machine_name = iops.get('machine', f"VM-{i+1}")
+                        writer.writerow([machine_name, iops.get('total_iops', 0)])
                     else:
                         # Old structure (backward compatibility)
                         writer.writerow([f"VM-{i+1}", iops])
@@ -1349,8 +1352,59 @@ def create_graphs_from_job_summaries(output_dir='.', graph_type='bar', summary_o
         print(f"Error in graph creation: {e}")
 
 
+def extract_latency_data_for_graph(operation, block_size, output_dir, data_type='iops'):
+    """
+    Extract average latency data for a specific operation and block size.
+    
+    Args:
+        operation: Operation name (e.g., 'read', 'write', 'randread', 'randwrite')
+        block_size: Block size (e.g., '4k', '8k', '128k')
+        output_dir: Output directory where latencydata is stored
+        data_type: Data type ('iops' or 'bandwidth')
+    
+    Returns:
+        Dictionary with machine names as keys and average latency as values
+    """
+    try:
+        import os
+        
+        # Construct the latency file path
+        data_type_suffix = 'bw' if data_type == 'bandwidth' else 'iops'
+        latency_file = os.path.join(output_dir, 'latencydata', operation, f"{block_size}_{data_type_suffix}.txt")
+        
+        if not os.path.exists(latency_file):
+            print(f"Latency file not found: {latency_file}")
+            return {}
+        
+        latency_data = {}
+        
+        with open(latency_file, 'r') as f:
+            lines = f.readlines()
+            
+        machine_name = None
+        for line in lines:
+            if line.startswith('Machine:'):
+                # Extract machine name (remove 'Machine: ' prefix)
+                machine_name = line.replace('Machine:', '').strip()
+            elif line.startswith('Average Latency:') and machine_name:
+                # Extract latency value (remove 'Average Latency: ' prefix and ' ms' suffix)
+                latency_str = line.replace('Average Latency:', '').replace('ms', '').strip()
+                try:
+                    latency_value = float(latency_str)
+                    latency_data[machine_name] = latency_value
+                except ValueError:
+                    continue
+                machine_name = None  # Reset for next machine
+        
+        return latency_data
+        
+    except Exception as e:
+        print(f"Error extracting latency data: {e}")
+        return {}
+
+
 def create_single_graph(csv_file, graph_type, output_dir):
-    """Create a single graph from a CSV file."""
+    """Create a single graph from a CSV file with dual-axis for latency data."""
     try:
         # Read the CSV file
         df = pd.read_csv(csv_file)
@@ -1365,16 +1419,33 @@ def create_single_graph(csv_file, graph_type, output_dir):
             data_column = 'TotalIOPS'
             data_type = 'IOPS'
             y_label = 'Total IOPS per VM (sum of all jobs)'
+            data_type_for_latency = 'iops'
         elif 'TotalBwMean' in df.columns:
             data_column = 'TotalBwMean'
             data_type = 'Bandwidth'
             y_label = 'Total bw_mean per VM (sum of all jobs) [KB]'
+            data_type_for_latency = 'iops'  # Use IOPS latency data since it's the same source
         else:
             print(f"Skipping {csv_file}: Missing TotalIOPS or TotalBwMean column")
             return
         
-        # Create the plot
-        plt.figure(figsize=(10, 6))
+        # Extract block size and operation from filename for latency data
+        operation = None
+        block_size = None
+        latency_data = {}
+        
+        if 'block_size_' in csv_file and '_operation_' in csv_file:
+            filename = os.path.basename(csv_file)
+            parts = filename.replace('_job_summary.csv', '').split('_')
+            if len(parts) >= 7:
+                block_size = parts[4]  # 4k
+                operation = parts[6]   # read
+                
+                # Extract latency data for this operation and block size
+                latency_data = extract_latency_data_for_graph(operation, block_size, output_dir, data_type_for_latency)
+        
+        # Create the plot with dual axes
+        fig, ax1 = plt.subplots(figsize=(12, 6))
         
         # Create numeric x-axis positions for all data points
         machines = df['Machine'].tolist()
@@ -1384,18 +1455,18 @@ def create_single_graph(csv_file, graph_type, output_dir):
         # Get X-axis labels and positions based on number of VMs
         x_positions, x_labels = get_x_axis_labels_and_positions(df)
         
+        # Plot primary data (IOPS or Bandwidth)
         if graph_type == 'bar':
-            # Create bar chart
-            bars = plt.bar(all_positions, total_data, color='skyblue', edgecolor='navy', alpha=0.7)
+            bars = ax1.bar(all_positions, total_data, color='skyblue', edgecolor='navy', alpha=0.7)
         else:  # line graph
-            # Create line plot
-            plt.plot(all_positions, total_data, 
+            ax1.plot(all_positions, total_data, 
                     marker='o', linewidth=3, markersize=8, 
                     color='steelblue', markerfacecolor='lightblue', 
                     markeredgecolor='navy', markeredgewidth=2)
 
         # Set x-axis ticks based on visibility rules
-        plt.xticks(x_positions, x_labels, rotation=45, ha='right')
+        ax1.set_xticks(x_positions)
+        ax1.set_xticklabels(x_labels, rotation=45, ha='right')
         
         # Calculate average (Total / number of machines)
         total_data_sum = sum(total_data)
@@ -1404,20 +1475,78 @@ def create_single_graph(csv_file, graph_type, output_dir):
         
         # Add horizontal line for average
         if data_type == 'IOPS':
-            plt.axhline(y=average_data, color='red', linestyle='--', linewidth=2, alpha=0.8, 
+            ax1.axhline(y=average_data, color='red', linestyle='--', linewidth=2, alpha=0.8, 
                        label=f'Average: {average_data:.1f} IOPS')
         else:
-            plt.axhline(y=average_data, color='red', linestyle='--', linewidth=2, alpha=0.8, 
+            ax1.axhline(y=average_data, color='red', linestyle='--', linewidth=2, alpha=0.8, 
                        label=f'Average: {average_data:.1f} KB')
                 
-        # Customize the plot
-        plt.ylabel(y_label, fontsize=10, fontweight='bold')
-        plt.xlabel('VM Index', fontsize=10, fontweight='bold')
+        # Customize the primary axis
+        ax1.set_ylabel(y_label, fontsize=10, fontweight='bold', color='blue')
+        ax1.set_xlabel('VM Index', fontsize=10, fontweight='bold')
+        ax1.tick_params(axis='y', labelcolor='blue')
+        
+        # Add latency data on secondary axis if available
+        if latency_data and len(latency_data) > 0:
+            # Create secondary y-axis for latency
+            ax2 = ax1.twinx()
+            
+            # Match latency data to machines in the same order
+            latency_values = []
+            for machine in machines:
+                # Try to find matching latency data (handle different machine name formats)
+                found_latency = None
+                # Extract machine name from full path (e.g., /path/to/vm-1 -> vm-1)
+                machine_basename = os.path.basename(machine)
+                
+                # Try exact match first
+                if machine_basename in latency_data:
+                    found_latency = latency_data[machine_basename]
+                else:
+                    # If no exact match, try to find a match by checking if the machine name
+                    # contains the latency machine name as a complete word
+                    for lat_machine, lat_value in latency_data.items():
+                        # Check if lat_machine is the same as machine_basename or
+                        # if machine contains lat_machine as a complete path component
+                        if machine_basename == lat_machine or machine.rstrip('/').endswith('/' + lat_machine):
+                            found_latency = lat_value
+                            break
+                
+                if found_latency is not None:
+                    latency_values.append(found_latency)
+                else:
+                    latency_values.append(0)  # Default to 0 if no latency data found
+            
+            # Plot latency data
+            if graph_type == 'bar':
+                # For bar charts, show latency as a line overlay
+                ax2.plot(all_positions, latency_values, 
+                        marker='s', linewidth=2, markersize=6, 
+                        color='orange', markerfacecolor='orange', 
+                        markeredgecolor='darkorange', markeredgewidth=1,
+                        label='Average Latency (ms)')
+            else:  # line graph
+                ax2.plot(all_positions, latency_values, 
+                        marker='s', linewidth=2, markersize=6, 
+                        color='orange', markerfacecolor='orange', 
+                        markeredgecolor='darkorange', markeredgewidth=1,
+                        label='Average Latency (ms)')
+            
+            # Calculate average latency
+            avg_latency = sum(latency_values) / len(latency_values) if latency_values else 0
+            ax2.axhline(y=avg_latency, color='darkorange', linestyle=':', linewidth=2, alpha=0.8,
+                       label=f'Avg Latency: {avg_latency:.2f} ms')
+            
+            # Customize secondary axis
+            ax2.set_ylabel('Average Latency (ms)', fontsize=10, fontweight='bold', color='orange')
+            ax2.tick_params(axis='y', labelcolor='orange')
+            
+            # Set latency axis limits
+            if latency_values:
+                ax2.set_ylim(0, max(latency_values) * 1.1)
         
         # Extract block size and operation from filename for title
         if 'block_size_' in csv_file and '_operation_' in csv_file:
-            # Extract from filename like: all_machines_block_size_4k_operation_read_job_summary.csv
-            
             filename = os.path.basename(csv_file)
             parts = filename.replace('_job_summary.csv', '').split('_')
             if len(parts) >= 7:
@@ -1446,21 +1575,28 @@ def create_single_graph(csv_file, graph_type, output_dir):
             plt.title(csv_file.replace('_bw_mean_job_summary.csv', ''), fontsize=14, fontweight='bold')
 
         # Set axis limits to include zero
-        plt.xlim(-0.5, len(machines) - 0.5)
-        plt.ylim(0, max(total_data) * 1.1)
+        ax1.set_xlim(-0.5, len(machines) - 0.5)
+        ax1.set_ylim(0, max(total_data) * 1.1)
         
         # Customize grid and layout
         if graph_type == 'bar':
-            plt.grid(axis='y', alpha=0.3, linestyle='--')
+            ax1.grid(axis='y', alpha=0.3, linestyle='--')
         else:  # line graph
-            plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+            ax1.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
         
-        # Add legend for the average line
-        plt.legend(loc='upper right', fontsize=9)
+        # Add legend for both axes (positioned outside the graph area)
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        if latency_data and len(latency_data) > 0:
+            lines2, labels2 = ax2.get_legend_handles_labels()
+            ax1.legend(lines1 + lines2, labels1 + labels2, loc='center left', bbox_to_anchor=(1.15, 0.5), fontsize=9)
+        else:
+            ax1.legend(loc='center left', bbox_to_anchor=(1.15, 0.5), fontsize=9)
         
+        # Adjust layout to accommodate legend outside the graph
         plt.tight_layout()
+        plt.subplots_adjust(right=0.65)  # Make more room for the legend on the right
                 
-                # Create output filename with data type included
+        # Create output filename with data type included
         csv_basename = os.path.basename(csv_file)
         data_type_suffix = 'bw' if data_type == 'Bandwidth' else 'iops'
         if graph_type == 'bar':
@@ -1469,7 +1605,7 @@ def create_single_graph(csv_file, graph_type, output_dir):
             output_filename = csv_basename.replace('.csv', f'_{graph_type}_{data_type_suffix}.png')
         output_file = os.path.join(output_dir, output_filename)
                 
-                # Save the plot
+        # Save the plot
         plt.savefig(output_file, dpi=300, bbox_inches='tight', 
                    facecolor='white', edgecolor='none')
         plt.close()
@@ -1524,8 +1660,8 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                     # Get block sizes (all columns except vm_name)
                     block_sizes = [col for col in df.columns if col != 'vm_name']
                     
-                    # Create the plot
-                    plt.figure(figsize=(14, 10))
+                    # Create the plot with dual axes - increased size for better spacing
+                    fig, ax1 = plt.subplots(figsize=(20, 12))
                     
                     # Sort by vm_name for consistent ordering
                     df_sorted = df.sort_values('vm_name')
@@ -1536,8 +1672,10 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                     # Create numeric x-axis positions for all data points
                     all_positions = range(len(df_sorted))
                     
-                    # Create plot based on graph type
-                    colors = plt.cm.Set3(np.linspace(0, 1, len(block_sizes)))
+                    # Create plot based on graph type - use more readable colors
+                    # Define a set of colors that provide good contrast and readability
+                    readable_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+                    colors = [readable_colors[i % len(readable_colors)] for i in range(len(block_sizes))]
                     
                     if current_graph_type == 'bar':
                         # Create bar plot for each block size
@@ -1546,7 +1684,7 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                         for i, block_size in enumerate(block_sizes):
                             offset = (i - len(block_sizes)/2 + 0.5) * width
                             display_name = get_block_size_display_name(block_size)
-                            bars = plt.bar([pos + offset for pos in all_positions], 
+                            bars = ax1.bar([pos + offset for pos in all_positions], 
                                           df_sorted[block_size], 
                                           width=width, 
                                           label=display_name,
@@ -1558,7 +1696,7 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                         # Create line plot for each block size
                         for i, block_size in enumerate(block_sizes):
                             display_name = get_block_size_display_name(block_size)
-                            plt.plot(all_positions, df_sorted[block_size], 
+                            ax1.plot(all_positions, df_sorted[block_size], 
                                     marker='o', linewidth=2, markersize=6,
                                     label=display_name,
                                     color=colors[i], 
@@ -1573,7 +1711,7 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                         block_average = block_data.mean()
                         
                         # Add horizontal line for this block size's average
-                        plt.axhline(y=block_average, color=colors[i], linestyle='--', linewidth=2, alpha=0.7)
+                        ax1.axhline(y=block_average, color=colors[i], linestyle='--', linewidth=2, alpha=0.7)
                 
                     # Get FIO configuration for subtitle (use first block size as reference)
                     # For comparison graphs, exclude block size since multiple block sizes are shown
@@ -1591,13 +1729,77 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                     
                     # Set title and Y-axis label based on data type
                     if data_type == 'iops':
-                        plt.title(f'Total IOPS per VM Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
-                                 fontsize=16, fontweight='bold', pad=40)
-                        plt.ylabel('Total IOPS per VM (sum of all jobs)', fontsize=12, fontweight='bold')
+                        ax1.set_title(f'Total IOPS per VM Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
+                                     fontsize=16, fontweight='bold', pad=40)
+                        ax1.set_ylabel('Total IOPS per VM (sum of all jobs)', fontsize=12, fontweight='bold', color='blue')
+                        data_type_for_latency = 'iops'
                     else:
-                        plt.title(f'Total Bandwidth per VM Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
-                                 fontsize=16, fontweight='bold', pad=40)
-                        plt.ylabel('Total bw_mean per VM (sum of all jobs) [KB]', fontsize=12, fontweight='bold')
+                        ax1.set_title(f'Total Bandwidth per VM Performance Comparison ({chart_type}): {operation.upper()} - Selected Block Sizes ({num_vms} VMs)', 
+                                     fontsize=16, fontweight='bold', pad=40)
+                        ax1.set_ylabel('Total bw_mean per VM (sum of all jobs) [KB]', fontsize=12, fontweight='bold', color='blue')
+                        data_type_for_latency = 'bandwidth'
+                    
+                    # Add latency data on secondary axis if available
+                    latency_data_available = False
+                    if block_sizes:
+                        # Create secondary y-axis for latency
+                        ax2 = ax1.twinx()
+                        
+                        # Define colors for different block sizes
+                        latency_colors = ['orange', 'red', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
+                        latency_markers = ['s', 'o', '^', 'D', 'v', '<', '>', 'p']
+                        
+                        all_latency_values = []
+                        
+                        # Plot latency data for each block size
+                        for i, block_size in enumerate(block_sizes):
+                            latency_data = extract_latency_data_for_graph(operation, block_size, output_dir, data_type_for_latency)
+                            
+                            if latency_data and len(latency_data) > 0:
+                                latency_data_available = True
+                                
+                                # Match latency data to machines in the same order
+                                latency_values = []
+                                for machine in df_sorted['vm_name']:
+                                    # Try to find matching latency data (handle different machine name formats and case)
+                                    found_latency = None
+                                    for lat_machine, lat_value in latency_data.items():
+                                        # Normalize both machine names to lowercase for comparison
+                                        if machine.lower() == lat_machine.lower():
+                                            found_latency = lat_value
+                                            break
+                                    
+                                    if found_latency is not None:
+                                        latency_values.append(found_latency)
+                                    else:
+                                        latency_values.append(0)  # Default to 0 if no latency data found
+                                
+                                # Store all latency values for axis limits
+                                all_latency_values.extend([v for v in latency_values if v > 0])
+                                
+                                # Plot latency data as a line overlay for this block size
+                                color = latency_colors[i % len(latency_colors)]
+                                marker = latency_markers[i % len(latency_markers)]
+                                
+                                ax2.plot(all_positions, latency_values, 
+                                        marker=marker, linewidth=2, markersize=4, 
+                                        color=color, markerfacecolor=color, 
+                                        markeredgecolor=color, markeredgewidth=1,
+                                        label=f'Latency {block_size.upper()}', alpha=0.8)
+                                
+                                # Calculate and plot average latency for this block size
+                                avg_latency = sum(latency_values) / len(latency_values) if latency_values else 0
+                                ax2.axhline(y=avg_latency, color=color, linestyle=':', linewidth=2, alpha=0.8,
+                                           label=f'Avg Latency {block_size.upper()}: {avg_latency:.2f} ms')
+                        
+                        if latency_data_available:
+                            # Customize secondary axis
+                            ax2.set_ylabel('Average Latency (ms)', fontsize=12, fontweight='bold', color='orange')
+                            ax2.tick_params(axis='y', labelcolor='orange')
+                            
+                            # Set latency axis limits based on all latency values
+                            if all_latency_values:
+                                ax2.set_ylim(0, max(all_latency_values) * 1.1)
                     
                     # Add subtitle with FIO configuration
                     if subtitle:
@@ -1607,18 +1809,25 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                         plt.figtext(0.325, 0.88, subtitle, fontsize=10, ha='center', va='top')
                     
                     # Set X-axis label
-                    plt.xlabel('VM Index', fontsize=12, fontweight='bold')
+                    ax1.set_xlabel('VM Index', fontsize=12, fontweight='bold')
                     
                     # Set x-axis ticks based on visibility rules
-                    plt.xticks(x_positions, x_labels, rotation=45, ha='right')
+                    ax1.set_xticks(x_positions)
+                    ax1.set_xticklabels(x_labels, rotation=45, ha='right')
                     
                     # Set axis limits
-                    plt.xlim(-0.5, len(df_sorted) - 0.5)
+                    ax1.set_xlim(-0.5, len(df_sorted) - 0.5)
                     max_value = df_sorted[block_sizes].max().max()
-                    plt.ylim(0, max_value * 1.1)
+                    ax1.set_ylim(0, max_value * 1.1)
                     
                     # Add legend on the right side of the graph (aligned with top of graph)
-                    plt.legend(loc='center left', bbox_to_anchor=(1.02, 0.95), fontsize=10)
+                    if latency_data_available:
+                        # Combine legends from both axes
+                        lines1, labels1 = ax1.get_legend_handles_labels()
+                        lines2, labels2 = ax2.get_legend_handles_labels()
+                        ax1.legend(lines1 + lines2, labels1 + labels2, loc='center left', bbox_to_anchor=(1.15, 0.95), fontsize=9)
+                    else:
+                        ax1.legend(loc='center left', bbox_to_anchor=(1.15, 0.95), fontsize=9)
                     
                     # Add average, total per VM, and total all VMs value text boxes below the legend
                     for i, block_size in enumerate(block_sizes):
@@ -1637,33 +1846,33 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                             total_per_vm_text = f'{display_name} Total per VM: {block_average:.1f} KB'
                             total_all_vms_text = f'{display_name} Total All VMs: {block_total:.0f} KB'
                         
-                        # Position average text box (top)
-                        plt.text(1.02, 0.75 - (i * 0.16), avg_text, 
-                                transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
-                                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8),
+                        # Position average text box (top) - white background for better readability
+                        ax1.text(1.15, 0.75 - (i * 0.16), avg_text, 
+                                transform=ax1.transAxes, fontsize=9, fontweight='bold',
+                                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor=colors[i], linewidth=1),
                                 color=colors[i])
                         
-                        # Position total per VM text box (middle)
-                        plt.text(1.02, 0.75 - (i * 0.16) - 0.04, total_per_vm_text, 
-                                transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
-                                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                        # Position total per VM text box (middle) - white background for better readability
+                        ax1.text(1.15, 0.75 - (i * 0.16) - 0.04, total_per_vm_text, 
+                                transform=ax1.transAxes, fontsize=9, fontweight='bold',
+                                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor=colors[i], linewidth=1),
                                 color=colors[i])
                         
-                        # Position total all VMs text box (bottom)
-                        plt.text(1.02, 0.75 - (i * 0.16) - 0.08, total_all_vms_text, 
-                                transform=plt.gca().transAxes, fontsize=10, fontweight='bold',
-                                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8),
+                        # Position total all VMs text box (bottom) - white background for better readability
+                        ax1.text(1.15, 0.75 - (i * 0.16) - 0.08, total_all_vms_text, 
+                                transform=ax1.transAxes, fontsize=9, fontweight='bold',
+                                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor=colors[i], linewidth=1),
                                 color=colors[i])
                     
                     # Add grid for better readability
                     if current_graph_type == 'bar':
-                        plt.grid(axis='y', alpha=0.3, linestyle='--')
+                        ax1.grid(axis='y', alpha=0.3, linestyle='--')
                     else:  # line graph
-                        plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+                        ax1.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
                 
                     # Adjust layout to accommodate legend and text boxes on the right
                     plt.tight_layout()
-                    plt.subplots_adjust(right=0.65, top=0.85)  # Make room for legend and text boxes, and increase top margin for subtitle
+                    plt.subplots_adjust(right=0.55, top=0.85)  # Increased space on right for latency axis label and legend boxes
                     
                     # Generate PNG filename with number of machines, block sizes, graph type, and data type included
                     block_sizes_str = '-'.join(block_sizes)
