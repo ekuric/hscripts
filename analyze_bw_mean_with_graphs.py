@@ -1657,7 +1657,7 @@ def create_single_graph(csv_file, graph_type, output_dir):
             bars = ax1.bar(all_positions, total_data, color='skyblue', edgecolor='navy', alpha=0.7)
         else:  # line graph
             ax1.plot(all_positions, total_data, 
-                    marker='o', linewidth=3, markersize=8, 
+                    marker='o', linewidth=3, markersize=4, 
                     color='steelblue', markerfacecolor='lightblue', 
                     markeredgecolor='navy', markeredgewidth=2)
 
@@ -1728,13 +1728,13 @@ def create_single_graph(csv_file, graph_type, output_dir):
             if graph_type == 'bar':
                 # For bar charts, show latency as a line overlay
                 ax2.plot(all_positions, latency_values, 
-                        marker='s', linewidth=2, markersize=6, 
+                        marker='s', linewidth=2, markersize=3, 
                         color='orange', markerfacecolor='orange', 
                         markeredgecolor='darkorange', markeredgewidth=1,
                         label='Average Latency (ms)')
             else:  # line graph
                 ax2.plot(all_positions, latency_values, 
-                        marker='s', linewidth=2, markersize=6, 
+                        marker='s', linewidth=2, markersize=3, 
                         color='orange', markerfacecolor='orange', 
                         markeredgecolor='darkorange', markeredgewidth=1,
                         label='Average Latency (ms)')
@@ -1904,7 +1904,7 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                         for i, block_size in enumerate(block_sizes):
                             display_name = get_block_size_display_name(block_size)
                             ax1.plot(all_positions, df_sorted[block_size], 
-                                    marker='o', linewidth=2, markersize=6,
+                                    marker='o', linewidth=2, markersize=3,
                                     label=display_name,
                                     color=colors[i], 
                                     markerfacecolor=colors[i],
@@ -2010,7 +2010,7 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                                 marker = latency_markers[i % len(latency_markers)]
                                 
                                 ax2.plot(all_positions, latency_values, 
-                                        marker=marker, linewidth=2, markersize=4, 
+                                        marker=marker, linewidth=2, markersize=2, 
                                         color=color, markerfacecolor=color, 
                                         markeredgecolor=color, markeredgewidth=1,
                                         label=f'Latency {block_size.upper()}', alpha=0.8)
