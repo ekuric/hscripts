@@ -1774,7 +1774,9 @@ def create_single_graph(csv_file, graph_type, output_dir):
                 
                 # Add subtitle with FIO configuration
                 if subtitle:
-                    plt.figtext(0.5, 0.92, subtitle, fontsize=10, ha='center', va='top')
+                    # Position subtitle in the center of the graph area (not the entire figure)
+                    # Since we have right=0.65, the graph area is from 0 to 0.65, so center is at 0.325
+                    plt.figtext(0.325, 0.92, subtitle, fontsize=10, ha='center', va='top')
                 else:
                     plt.title(csv_file.replace('_job_summary.csv', ''), fontsize=14, fontweight='bold')
         else:
@@ -2032,9 +2034,9 @@ def create_operation_summary_graphs(csv_files, graph_type='bar', output_dir='.',
                     # Add subtitle with FIO configuration
                     if subtitle:
                         # Position subtitle in the center of the graph area (not the entire figure)
-                        # Since we have right=0.65, the graph area is from 0 to 0.65, so center is at 0.325
+                        # Since we have right=0.55, the graph area is from 0 to 0.55, so center is at 0.275
                         # Position below the title (which has pad=40), so subtitle goes at 0.88 to be below title
-                        plt.figtext(0.325, 0.88, subtitle, fontsize=10, ha='center', va='top')
+                        plt.figtext(0.275, 0.88, subtitle, fontsize=10, ha='center', va='top')
                     
                     # Set X-axis label
                     ax1.set_xlabel('Machine Index', fontsize=12, fontweight='bold')
