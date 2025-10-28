@@ -2239,15 +2239,33 @@ def create_latency_performance_correlation_graph(all_machines_results, output_di
                 performance_values = []
                 latency_values = []
                 
-                for item in data:
-                    if data_type == 'iops':
+                if data_type == 'iops':
+                    # IOPS data: one entry per machine with pre-averaged latency
+                    for item in data:
                         if isinstance(item, dict) and 'total_iops' in item and 'avg_latency_ms' in item:
                             performance_values.append(item['total_iops'])
                             latency_values.append(item['avg_latency_ms'])
-                    else:  # bandwidth
-                        if isinstance(item, dict) and 'bw_mean' in item and 'avg_latency_ms' in item:
-                            performance_values.append(item['bw_mean'])
-                            latency_values.append(item['avg_latency_ms'])
+                else:  # bandwidth
+                    # Bandwidth data: multiple entries per machine (one per job), need to aggregate
+                    machine_data = {}
+                    for item in data:
+                        if isinstance(item, dict) and 'bw_mean' in item and 'avg_latency_ms' in item and 'machine' in item:
+                            machine = os.path.basename(item['machine'])  # Extract basename to match IOPS format
+                            bw_value = item['bw_mean']
+                            latency_value = item['avg_latency_ms']
+                            
+                            if machine not in machine_data:
+                                machine_data[machine] = {'bw_values': [], 'latency_values': []}
+                            machine_data[machine]['bw_values'].append(bw_value)
+                            machine_data[machine]['latency_values'].append(latency_value)
+                    
+                    # Calculate average performance and latency per machine
+                    for machine, values in machine_data.items():
+                        if values['bw_values'] and values['latency_values']:
+                            avg_bw = sum(values['bw_values']) / len(values['bw_values'])
+                            avg_latency = sum(values['latency_values']) / len(values['latency_values'])
+                            performance_values.append(avg_bw)
+                            latency_values.append(avg_latency)
                 
                 if performance_values and latency_values:
                     # For large datasets (>1000 points), use smaller markers and lower alpha for better performance
@@ -2419,12 +2437,37 @@ def save_latency_data_to_files(all_machines_results, output_dir='.', data_type='
                 
                 # Extract latency data for each machine
                 machine_latency_data = []
-                for item in data:
-                    if isinstance(item, dict) and 'avg_latency_ms' in item and 'machine' in item:
-                        machine_latency_data.append({
-                            'machine': item['machine'],
-                            'avg_latency_ms': item['avg_latency_ms']
-                        })
+                
+                if data_type == 'iops':
+                    # IOPS data: one entry per machine with pre-averaged latency
+                    for item in data:
+                        if isinstance(item, dict) and 'avg_latency_ms' in item and 'machine' in item:
+                            machine_latency_data.append({
+                                'machine': item['machine'],
+                                'avg_latency_ms': item['avg_latency_ms']
+                            })
+                else:
+                    # Bandwidth data: multiple entries per machine (one per job), need to aggregate
+                    machine_latency_groups = {}
+                    for item in data:
+                        if isinstance(item, dict) and 'avg_latency_ms' in item and 'machine' in item:
+                            machine = item['machine']
+                            # Extract basename from machine path to match IOPS format
+                            machine_basename = os.path.basename(machine)
+                            latency = item['avg_latency_ms']
+                            
+                            if machine_basename not in machine_latency_groups:
+                                machine_latency_groups[machine_basename] = []
+                            machine_latency_groups[machine_basename].append(latency)
+                    
+                    # Calculate average latency per machine
+                    for machine_basename, latencies in machine_latency_groups.items():
+                        if latencies:
+                            avg_latency = sum(latencies) / len(latencies)
+                            machine_latency_data.append({
+                                'machine': machine_basename,
+                                'avg_latency_ms': avg_latency
+                            })
                 
                 if not machine_latency_data:
                     print(f"No valid latency data found for {operation}-{block_size}")
