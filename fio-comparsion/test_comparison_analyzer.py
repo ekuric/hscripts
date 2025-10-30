@@ -13,6 +13,8 @@ Options:
     --graphs bar|line|both    Type of graphs to generate (default: both)
     --output-dir DIR         Output directory for results (default: current directory)
     --summary-only           Generate only summary graphs (skip per-VM comparison graphs)
+    --iops                   Analyze IOPS performance (default if no metric specified)
+    --bw                     Analyze bandwidth performance
     --help                   Show this help message
 
 Examples:
@@ -20,6 +22,8 @@ Examples:
     python3 test_comparison_analyzer.py test1/ test2/ --graphs bar
     python3 test_comparison_analyzer.py test1/ test2/ --output-dir results/
     python3 test_comparison_analyzer.py test1/ test2/ --summary-only
+    python3 test_comparison_analyzer.py test1/ test2/ --bw
+    python3 test_comparison_analyzer.py test1/ test2/ --iops --bw
 """
 
 import json
@@ -45,61 +49,6 @@ except ImportError as e:
     print(f"Warning: Plotting libraries not available: {e}")
     print("Install with: pip install pandas matplotlib numpy")
 
-# Global variable to store FIO configurations for subtitles
-FIO_CONFIGS = {}
-
-def extract_fio_config_from_json(json_file_path):
-    """
-    Extract FIO configuration from JSON file for subtitle display.
-    Returns a dictionary with configuration parameters.
-    """
-    config_data = {}
-    
-    try:
-        with open(json_file_path, 'r') as f:
-            data = json.load(f)
-        
-        # Check if jobs exist
-        if 'jobs' not in data or len(data['jobs']) == 0:
-            return config_data
-        
-        # Extract from first job's options (assuming all jobs have similar config)
-        job_options = data['jobs'][0].get('job options', {})
-        
-        # Extract the requested parameters
-        config_data['size'] = job_options.get('size', 'N/A')
-        config_data['bs'] = job_options.get('bs', 'N/A')
-        config_data['runtime'] = job_options.get('runtime', 'N/A')
-        config_data['direct'] = job_options.get('direct', 'N/A')
-        config_data['numjobs'] = job_options.get('numjobs', 'N/A')
-        config_data['iodepth'] = job_options.get('iodepth', 'N/A')
-        config_data['rate_iops'] = job_options.get('rate_iops', None)  # May not be present
-        
-    except (json.JSONDecodeError, KeyError, FileNotFoundError) as e:
-        print(f"Error extracting config from {json_file_path}: {e}")
-    
-    return config_data
-
-def format_fio_subtitle(config_data):
-    """
-    Format FIO configuration data into a subtitle string.
-    """
-    subtitle_parts = []
-    
-    if config_data.get('size') != 'N/A':
-        subtitle_parts.append(f"Size: {config_data['size']}")
-    if config_data.get('bs') != 'N/A':
-        subtitle_parts.append(f"BS: {config_data['bs']}")
-    if config_data.get('runtime') != 'N/A':
-        subtitle_parts.append(f"Runtime: {config_data['runtime']}s")
-    if config_data.get('direct') != 'N/A':
-        subtitle_parts.append(f"Direct: {config_data['direct']}")
-    if config_data.get('numjobs') != 'N/A':
-        subtitle_parts.append(f"NumJobs: {config_data['numjobs']}")
-    if config_data.get('iodepth') != 'N/A':
-        subtitle_parts.append(f"IODepth: {config_data['iodepth']}")
-    
-    return " | ".join(subtitle_parts)
 
 def extract_block_size_from_filename(filename):
     """
@@ -136,13 +85,31 @@ def get_block_size_display_name(block_size):
     else:
         return f"{block_size}B"
 
+def get_block_size_kb_display(block_size):
+    """
+    Keep block size in original k format for legend display (e.g., '4k' -> '4k', '1024k' -> '1024k')
+    Preserves the original k format as used in FIO testing.
+    """
+    if block_size.endswith('k'):
+        # Keep original k format
+        return block_size
+    elif block_size.endswith('m'):
+        # Convert m to k format
+        size_num = int(block_size[:-1])
+        return f"{size_num * 1024}k"
+    elif block_size.endswith('g'):
+        # Convert g to k format
+        size_num = int(block_size[:-1])
+        return f"{size_num * 1024 * 1024}k"
+    else:
+        # For numeric values without suffix, add k
+        return f"{block_size}k"
+
 def extract_metrics_from_json(json_file_path, metric_type='iops'):
     """
     Extract IOPS or bandwidth data from a single FIO JSON file.
     Returns a dictionary with operation, block_size, and metric values.
-    Also stores FIO configuration data for subtitles.
     """
-    global FIO_CONFIGS
     
     try:
         with open(json_file_path, 'r') as f:
@@ -157,11 +124,6 @@ def extract_metrics_from_json(json_file_path, metric_type='iops'):
         if block_size == 'unknown':
             print(f"    Skipping {filename}: No block size found in filename")
             return None
-        
-        # Extract FIO configuration for subtitles
-        config_data = extract_fio_config_from_json(json_file_path)
-        config_key = (operation, block_size)
-        FIO_CONFIGS[config_key] = config_data
         
         # Sum up metrics across all jobs (in case multiple FIO jobs are running)
         total_read_iops = 0
@@ -202,9 +164,6 @@ def extract_metrics_from_json(json_file_path, metric_type='iops'):
         read_lat_ms = avg_read_lat_ns / 1000000 if avg_read_lat_ns > 0 else 0
         write_lat_ms = avg_write_lat_ns / 1000000 if avg_write_lat_ns > 0 else 0
         
-        # Get rate_iops from config
-        rate_iops = config_data.get('rate_iops', None)
-        
         # Return data based on metric type
         if metric_type == 'bw':
             return {
@@ -218,7 +177,6 @@ def extract_metrics_from_json(json_file_path, metric_type='iops'):
                 'write_bw_kbps': total_write_bw,
                 'read_lat_ms': read_lat_ms,
                 'write_lat_ms': write_lat_ms,
-                'rate_iops': rate_iops,
                 'file': filename
             }
         else:  # iops (default)
@@ -233,7 +191,6 @@ def extract_metrics_from_json(json_file_path, metric_type='iops'):
                 'write_bw_kbps': total_write_bw,
                 'read_lat_ms': read_lat_ms,
                 'write_lat_ms': write_lat_ms,
-                'rate_iops': rate_iops,
                 'file': filename
             }
         
@@ -258,11 +215,20 @@ def process_test_directory(test_dir, test_name=None, metric_type='iops'):
         print(f"Warning: Test directory {test_dir} does not exist")
         return results
     
-    # Find all vm-* directories
-    vm_dirs = [d for d in test_path.iterdir() if d.is_dir() and d.name.startswith('vm-')]
+    # Find all host directories (any subdir that contains at least one JSON file)
+    vm_dirs = []
+    for d in test_path.iterdir():
+        if not d.is_dir():
+            continue
+        try:
+            has_json = any(child.suffix == '.json' for child in d.iterdir())
+        except Exception:
+            has_json = False
+        if has_json:
+            vm_dirs.append(d)
     
     if not vm_dirs:
-        print(f"Warning: No vm-* directories found in {test_dir}")
+        print(f"Warning: No host directories with JSON files found in {test_dir}")
         return results
     
     # Use directory name as test name if not provided
@@ -458,8 +424,8 @@ def create_operation_summary_comparison_bar_chart(df, operation, block_sizes, te
     Shows the AVERAGE of all VMs for each test directory.
     """
     try:
-        # Create figure
-        plt.figure(figsize=(14, 10))
+        # Create figure - increased height for better spacing
+        plt.figure(figsize=(14, 12))
         
         # Prepare data for plotting
         x_pos = np.arange(len(block_sizes))
@@ -472,9 +438,7 @@ def create_operation_summary_comparison_bar_chart(df, operation, block_sizes, te
             test_data = df[df['test_name'] == test_name]
             avg_values = []
             
-            # Get rate_iops for this test (from first record)
-            rate_iops = test_data['rate_iops'].iloc[0] if not test_data.empty and 'rate_iops' in test_data.columns else None
-            legend_label = f"{test_name} (Rate: {rate_iops})" if rate_iops else test_name
+            legend_label = get_clean_test_name(test_name)
             
             for block_size in block_sizes:
                 bs_data = test_data[test_data['block_size'] == block_size]
@@ -493,30 +457,27 @@ def create_operation_summary_comparison_bar_chart(df, operation, block_sizes, te
                           width=width, label=legend_label, color=colors[i], alpha=0.8,
                           edgecolor='black', linewidth=0.5)
             
-            # Add data points (average values) on bars
-            for j, (pos, avg_val) in enumerate(zip(bar_positions, avg_values)):
-                if avg_val > 0:  # Only show values for non-zero averages
-                    plt.text(pos, avg_val + max(avg_values) * 0.01, 
-                            f'{avg_val:.0f}', ha='center', va='bottom', 
-                            fontsize=8, fontweight='bold')
+        # Build right-side summary box with values per block size
+        metric_name = 'Bandwidth (bw_mean)' if metric_type == 'bw' else 'IOPS (iops_mean)'
+        summary_lines = [f"Values per block size ({metric_name}):"]
+        for bs in block_sizes:
+            bs_label = get_block_size_display_name(bs)
+            summary_lines.append(f"\n{bs_label}:")
+            for i, test_name in enumerate(test_names):
+                test_data = df[df['test_name'] == test_name]
+                bs_data = test_data[test_data['block_size'] == bs]
+                if operation in ['read', 'randread']:
+                    metric_col = 'read_metric' if metric_type == 'bw' else 'read_iops'
+                else:
+                    metric_col = 'write_metric' if metric_type == 'bw' else 'write_iops'
+                value = bs_data[metric_col].mean() if not bs_data.empty else 0
+                summary_lines.append(f"  {get_clean_test_name(test_name)}: {value:.0f}")
         
-        # Get FIO configuration for subtitle
-        subtitle = ""
-        if block_sizes:
-            # Use the first block size to get FIO config for subtitle
-            first_block_size = block_sizes[0]
-            config_key = (operation, first_block_size)
-            if config_key in FIO_CONFIGS:
-                subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
         
         # Customize the plot
-        metric_name = 'Bandwidth (bw_mean)' if metric_type == 'bw' else 'IOPS (iops_mean)'
         plt.title(f'Average {metric_name} Performance Comparison (Bar Chart): {operation.upper()} - Block Size Comparison', 
                  fontsize=16, fontweight='bold', pad=20)
         
-        # Add subtitle with FIO configuration
-        if subtitle:
-            plt.suptitle(subtitle, fontsize=12, y=0.91, ha='right', va='bottom')
         
         plt.xlabel('Block Size', fontsize=12, fontweight='bold')
         y_label = f'{metric_name} [KB]' if metric_type == 'bw' else metric_name
@@ -525,14 +486,41 @@ def create_operation_summary_comparison_bar_chart(df, operation, block_sizes, te
         # Set x-axis ticks
         plt.xticks(x_pos, [get_block_size_display_name(bs) for bs in block_sizes])
         
-        # Add legend
-        plt.legend(title='Test', bbox_to_anchor=(1.05, 1), loc='upper left')
+        # Add legend outside the graph on the right side (consistent with bar charts)
+        plt.legend(title='Test', bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)
         
         # Add grid for better readability
         plt.grid(axis='y', alpha=0.3, linestyle='--')
         
-        # Adjust layout to prevent label cutoff
+        # Place summary box on the right
+        plt.figtext(1.33, 0.15, "\n".join(summary_lines).strip(),
+                   ha='right', va='bottom', fontsize=10, fontweight='bold',
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgray', alpha=0.8))
+        
+        # Build right-side summary box with values per block size (TOTAL)
+        metric_name = 'Bandwidth (bw_mean)' if metric_type == 'bw' else 'IOPS (iops_mean)'
+        summary_lines = [f"Values per block size ({metric_name}):"]
+        for bs in block_sizes:
+            bs_label = get_block_size_display_name(bs)
+            summary_lines.append(f"\n{bs_label}:")
+            for i, test_name in enumerate(test_names):
+                test_data = df[df['test_name'] == test_name]
+                bs_data = test_data[test_data['block_size'] == bs]
+                if operation in ['read', 'randread']:
+                    metric_col = 'read_metric' if metric_type == 'bw' else 'read_iops'
+                else:
+                    metric_col = 'write_metric' if metric_type == 'bw' else 'write_iops'
+                value = bs_data[metric_col].sum() if not bs_data.empty else 0
+                summary_lines.append(f"  {get_clean_test_name(test_name)}: {value:.0f}")
+
+        # Place summary box on the right
+        plt.figtext(1.25, 0.15, "\n".join(summary_lines).strip(), 
+                   ha='right', va='bottom', fontsize=10, fontweight='bold',
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgray', alpha=0.8))
+
+        # Adjust layout to accommodate legend and summary
         plt.tight_layout()
+        plt.subplots_adjust(right=0.65)
         
         # Save the chart
         metric_suffix = 'bw' if metric_type == 'bw' else 'iops'
@@ -554,8 +542,8 @@ def create_operation_summary_comparison_avg_bar_chart(df, operation, block_sizes
     Shows the AVERAGE of all VMs for each test directory.
     """
     try:
-        # Create figure
-        plt.figure(figsize=(14, 10))
+        # Create figure - increased height for better spacing
+        plt.figure(figsize=(14, 12))
         
         # Prepare data for plotting
         x_pos = np.arange(len(block_sizes))
@@ -568,9 +556,7 @@ def create_operation_summary_comparison_avg_bar_chart(df, operation, block_sizes
             test_data = df[df['test_name'] == test_name]
             avg_values = []
             
-            # Get rate_iops for this test (from first record)
-            rate_iops = test_data['rate_iops'].iloc[0] if not test_data.empty and 'rate_iops' in test_data.columns else None
-            legend_label = f"{test_name} (Rate: {rate_iops})" if rate_iops else test_name
+            legend_label = get_clean_test_name(test_name)
             
             for block_size in block_sizes:
                 bs_data = test_data[test_data['block_size'] == block_size]
@@ -591,30 +577,26 @@ def create_operation_summary_comparison_avg_bar_chart(df, operation, block_sizes
                           width=width, label=legend_label, color=colors[i], alpha=0.8,
                           edgecolor='black', linewidth=0.5)
             
-            # Add data points (average values) on bars
-            for j, (pos, avg_val) in enumerate(zip(bar_positions, avg_values)):
-                if avg_val > 0:  # Only show values for non-zero averages
-                    plt.text(pos, avg_val + max(avg_values) * 0.01, 
-                            f'{avg_val:.0f}', ha='center', va='bottom', 
-                            fontsize=8, fontweight='bold')
-        
-        # Get FIO configuration for subtitle
-        subtitle = ""
-        if block_sizes:
-            # Use the first block size to get FIO config for subtitle
-            first_block_size = block_sizes[0]
-            config_key = (operation, first_block_size)
-            if config_key in FIO_CONFIGS:
-                subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
+        # Build right-side summary box with values per block size
+        metric_name = 'Bandwidth (bw_mean)' if metric_type == 'bw' else 'IOPS (iops_mean)'
+        summary_lines = [f"Values per block size ({metric_name}):"]
+        for bs in block_sizes:
+            bs_label = get_block_size_display_name(bs)
+            summary_lines.append(f"\n{bs_label}:")
+            for i, test_name in enumerate(test_names):
+                test_data = df[df['test_name'] == test_name]
+                bs_data = test_data[test_data['block_size'] == bs]
+                if operation in ['read', 'randread']:
+                    metric_col = 'read_metric' if metric_type == 'bw' else 'read_iops'
+                else:
+                    metric_col = 'write_metric' if metric_type == 'bw' else 'write_iops'
+                value = bs_data[metric_col].mean() if not bs_data.empty else 0
+                summary_lines.append(f"  {get_clean_test_name(test_name)}: {value:.0f}")
         
         # Customize the plot
         metric_name = 'Bandwidth (bw_mean)' if metric_type == 'bw' else 'IOPS (iops_mean)'
         plt.title(f'Average {metric_name} Performance Comparison (Bar Chart): {operation.upper()} - Block Size Comparison', 
                  fontsize=16, fontweight='bold', pad=20)
-        
-        # Add subtitle with FIO configuration
-        if subtitle:
-            plt.suptitle(subtitle, fontsize=12, y=0.91, ha='right', va='bottom')
         
         plt.xlabel('Block Size', fontsize=12, fontweight='bold')
         y_label = f'Average {metric_name} [KB]' if metric_type == 'bw' else f'Average {metric_name}'
@@ -623,16 +605,21 @@ def create_operation_summary_comparison_avg_bar_chart(df, operation, block_sizes
         # Set x-axis ticks
         plt.xticks(x_pos, [get_block_size_display_name(bs) for bs in block_sizes])
         
-        # Add legend positioned lower to avoid overlap
-        plt.legend(title='Test', bbox_to_anchor=(1.05, 0.7), loc='upper left')
+        # Add legend outside the graph on the right side
+        plt.legend(title='Test', bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
         
         
         # Add grid for better readability
         plt.grid(axis='y', alpha=0.3, linestyle='--')
         
-        # Adjust layout to prevent label cutoff and make room for legend
+        # Place summary box on the right
+        plt.figtext(1.25, 0.15, "\n".join(summary_lines).strip(), 
+                   ha='right', va='bottom', fontsize=10, fontweight='bold',
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgray', alpha=0.8))
+        
+        # Adjust layout to accommodate legend and summary
         plt.tight_layout()
-        plt.subplots_adjust(right=0.8)  # Make room for legend
+        plt.subplots_adjust(right=0.65)
         
         # Save the chart
         metric_suffix = 'bw' if metric_type == 'bw' else 'iops'
@@ -654,8 +641,8 @@ def create_operation_summary_comparison_total_bar_chart(df, operation, block_siz
     Shows the TOTAL of all VMs for each test directory.
     """
     try:
-        # Create figure
-        plt.figure(figsize=(14, 10))
+        # Create figure - increased height for better spacing
+        plt.figure(figsize=(14, 12))
         
         # Prepare data for plotting
         x_pos = np.arange(len(block_sizes))
@@ -668,9 +655,7 @@ def create_operation_summary_comparison_total_bar_chart(df, operation, block_siz
             test_data = df[df['test_name'] == test_name]
             total_values = []
             
-            # Get rate_iops for this test (from first record)
-            rate_iops = test_data['rate_iops'].iloc[0] if not test_data.empty and 'rate_iops' in test_data.columns else None
-            legend_label = f"{test_name} (Rate: {rate_iops})" if rate_iops else test_name
+            legend_label = get_clean_test_name(test_name)
             
             for block_size in block_sizes:
                 bs_data = test_data[test_data['block_size'] == block_size]
@@ -691,30 +676,26 @@ def create_operation_summary_comparison_total_bar_chart(df, operation, block_siz
                           width=width, label=legend_label, color=colors[i], alpha=0.8,
                           edgecolor='black', linewidth=0.5)
             
-            # Add data points (total values) on bars
-            for j, (pos, total_val) in enumerate(zip(bar_positions, total_values)):
-                if total_val > 0:  # Only show values for non-zero totals
-                    plt.text(pos, total_val + max(total_values) * 0.01, 
-                            f'{total_val:.0f}', ha='center', va='bottom', 
-                            fontsize=8, fontweight='bold')
-        
-        # Get FIO configuration for subtitle
-        subtitle = ""
-        if block_sizes:
-            # Use the first block size to get FIO config for subtitle
-            first_block_size = block_sizes[0]
-            config_key = (operation, first_block_size)
-            if config_key in FIO_CONFIGS:
-                subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
+        # Build right-side summary box with values per block size
+        metric_name = 'Bandwidth (bw_mean)' if metric_type == 'bw' else 'IOPS (iops_mean)'
+        summary_lines = [f"Values per block size ({metric_name}):"]
+        for bs in block_sizes:
+            bs_label = get_block_size_display_name(bs)
+            summary_lines.append(f"\n{bs_label}:")
+            for i, test_name in enumerate(test_names):
+                test_data = df[df['test_name'] == test_name]
+                bs_data = test_data[test_data['block_size'] == bs]
+                if operation in ['read', 'randread']:
+                    metric_col = 'read_metric' if metric_type == 'bw' else 'read_iops'
+                else:
+                    metric_col = 'write_metric' if metric_type == 'bw' else 'write_iops'
+                value = bs_data[metric_col].sum() if not bs_data.empty else 0
+                summary_lines.append(f"  {get_clean_test_name(test_name)}: {value:.0f}")
         
         # Customize the plot
         metric_name = 'Bandwidth (bw_mean)' if metric_type == 'bw' else 'IOPS (iops_mean)'
         plt.title(f'Total {metric_name} Performance Comparison (Bar Chart): {operation.upper()} - Block Size Comparison', 
                  fontsize=16, fontweight='bold', pad=20)
-        
-        # Add subtitle with FIO configuration
-        if subtitle:
-            plt.suptitle(subtitle, fontsize=12, y=0.91, ha='right', va='bottom')
         
         plt.xlabel('Block Size', fontsize=12, fontweight='bold')
         y_label = f'Total {metric_name} [KB]' if metric_type == 'bw' else f'Total {metric_name}'
@@ -723,16 +704,21 @@ def create_operation_summary_comparison_total_bar_chart(df, operation, block_siz
         # Set x-axis ticks
         plt.xticks(x_pos, [get_block_size_display_name(bs) for bs in block_sizes])
         
-        # Add legend positioned lower to avoid overlap
-        plt.legend(title='Test', bbox_to_anchor=(1.05, 0.7), loc='upper left')
+        # Add legend outside the graph on the right side
+        plt.legend(title='Test', bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
         
         
         # Add grid for better readability
         plt.grid(axis='y', alpha=0.3, linestyle='--')
         
-        # Adjust layout to prevent label cutoff and make room for legend
+        # Place summary box on the right
+        plt.figtext(1.25, 0.15, "\n".join(summary_lines).strip(), 
+                   ha='right', va='bottom', fontsize=10, fontweight='bold',
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgray', alpha=0.8))
+        
+        # Adjust layout to accommodate legend and summary
         plt.tight_layout()
-        plt.subplots_adjust(right=0.8)  # Make room for legend
+        plt.subplots_adjust(right=0.65)
         
         # Save the chart
         metric_suffix = 'bw' if metric_type == 'bw' else 'iops'
@@ -753,8 +739,8 @@ def create_operation_summary_comparison_line_chart(df, operation, block_sizes, t
     Shows the AVERAGE of all VMs for each test directory.
     """
     try:
-        # Create figure
-        plt.figure(figsize=(14, 10))
+        # Create figure - increased height for better spacing
+        plt.figure(figsize=(14, 12))
         
         colors = plt.cm.Set3(np.linspace(0, 1, len(test_names)))
         
@@ -763,9 +749,7 @@ def create_operation_summary_comparison_line_chart(df, operation, block_sizes, t
             test_data = df[df['test_name'] == test_name]
             avg_values = []
             
-            # Get rate_iops for this test (from first record)
-            rate_iops = test_data['rate_iops'].iloc[0] if not test_data.empty and 'rate_iops' in test_data.columns else None
-            legend_label = f"{test_name} (Rate: {rate_iops})" if rate_iops else test_name
+            legend_label = get_clean_test_name(test_name)
             
             for block_size in block_sizes:
                 bs_data = test_data[test_data['block_size'] == block_size]
@@ -782,30 +766,24 @@ def create_operation_summary_comparison_line_chart(df, operation, block_sizes, t
                     label=legend_label, color=colors[i], 
                     markerfacecolor=colors[i], markeredgecolor='black', markeredgewidth=1)
             
-            # Add data points (average values) on line points
+            # Store data for summary display below legend
+            if not hasattr(plt.gca(), '_line_data_summary'):
+                plt.gca()._line_data_summary = []
+            
             for j, (block_size, avg_val) in enumerate(zip(block_sizes, avg_values)):
                 if avg_val > 0:  # Only show values for non-zero averages
-                    plt.text(block_size, avg_val + max(avg_values) * 0.02, 
-                            f'{avg_val:.0f}', ha='center', va='bottom', 
-                            fontsize=8, fontweight='bold')
-        
-        # Get FIO configuration for subtitle
-        subtitle = ""
-        if block_sizes:
-            # Use the first block size to get FIO config for subtitle
-            first_block_size = block_sizes[0]
-            config_key = (operation, first_block_size)
-            if config_key in FIO_CONFIGS:
-                subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
+                    # Store original block size, not the converted display name
+                    plt.gca()._line_data_summary.append({
+                        'test_name': test_name,
+                        'block_size': block_size,
+                        'value': avg_val,
+                        'color': colors[i]
+                    })
         
         # Customize the plot
         metric_name = 'Bandwidth (bw_mean)' if metric_type == 'bw' else 'IOPS (iops_mean)'
         plt.title(f'Average {metric_name} Performance Comparison (Line Chart): {operation.upper()} - Block Size Comparison', 
                  fontsize=16, fontweight='bold', pad=20)
-        
-        # Add subtitle with FIO configuration
-        if subtitle:
-            plt.suptitle(subtitle, fontsize=12, y=0.91, ha='right', va='bottom')
         
         plt.xlabel('Block Size', fontsize=12, fontweight='bold')
         y_label = f'{metric_name} [KB]' if metric_type == 'bw' else metric_name
@@ -814,8 +792,8 @@ def create_operation_summary_comparison_line_chart(df, operation, block_sizes, t
         # Set x-axis ticks
         plt.xticks(block_sizes, [get_block_size_display_name(bs) for bs in block_sizes])
         
-        # Add legend
-        plt.legend(title='Test', bbox_to_anchor=(1.05, 1), loc='upper left')
+        # Add legend outside the graph on the right side (same as bar charts)
+        plt.legend(title='Test', bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
         
         # Add grid for better readability
         plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
@@ -823,8 +801,29 @@ def create_operation_summary_comparison_line_chart(df, operation, block_sizes, t
         # Set y-axis to start from 0 for better visualization
         plt.ylim(bottom=0)
         
-        # Adjust layout to prevent label cutoff
+        # Build right-side summary box with values per block size
+        summary_lines = [f"Values per block size ({metric_name}):"]
+        for bs in block_sizes:
+            bs_label = get_block_size_display_name(bs)
+            summary_lines.append(f"\n{bs_label}:")
+            for i, test_name in enumerate(test_names):
+                test_data = df[df['test_name'] == test_name]
+                bs_data = test_data[test_data['block_size'] == bs]
+                if operation in ['read', 'randread']:
+                    metric_col = 'read_metric' if metric_type == 'bw' else 'read_iops'
+                else:
+                    metric_col = 'write_metric' if metric_type == 'bw' else 'write_iops'
+                value = bs_data[metric_col].mean() if not bs_data.empty else 0
+                summary_lines.append(f"  {get_clean_test_name(test_name)}: {value:.0f}")
+        
+        # Place summary box on the right
+        plt.figtext(1.45, 0.15, "\n".join(summary_lines).strip(),
+                   ha='right', va='bottom', fontsize=10, fontweight='bold',
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgray', alpha=0.8))
+
+        # Adjust layout to accommodate legend and summary
         plt.tight_layout()
+        plt.subplots_adjust(right=0.65)
         
         # Save the chart
         metric_suffix = 'bw' if metric_type == 'bw' else 'iops'
@@ -1001,8 +1000,8 @@ def create_operation_summary_comparison_avg_line_chart(df, operation, block_size
     Shows the AVERAGE of all VMs for each test directory.
     """
     try:
-        # Create figure
-        plt.figure(figsize=(14, 10))
+        # Create figure - increased height for better spacing
+        plt.figure(figsize=(14, 12))
         
         colors = plt.cm.Set3(np.linspace(0, 1, len(test_names)))
         
@@ -1011,9 +1010,7 @@ def create_operation_summary_comparison_avg_line_chart(df, operation, block_size
             test_data = df[df['test_name'] == test_name]
             avg_values = []
             
-            # Get rate_iops for this test (from first record)
-            rate_iops = test_data['rate_iops'].iloc[0] if not test_data.empty and 'rate_iops' in test_data.columns else None
-            legend_label = f"{test_name} (Rate: {rate_iops})" if rate_iops else test_name
+            legend_label = get_clean_test_name(test_name)
             
             for block_size in block_sizes:
                 bs_data = test_data[test_data['block_size'] == block_size]
@@ -1032,30 +1029,24 @@ def create_operation_summary_comparison_avg_line_chart(df, operation, block_size
                     label=legend_label, color=colors[i], 
                     markerfacecolor=colors[i], markeredgecolor='black', markeredgewidth=1)
             
-            # Add data points (average values) on line points
+            # Store data for summary display below legend
+            if not hasattr(plt.gca(), '_line_data_summary'):
+                plt.gca()._line_data_summary = []
+            
             for j, (block_size, avg_val) in enumerate(zip(block_sizes, avg_values)):
                 if avg_val > 0:  # Only show values for non-zero averages
-                    plt.text(block_size, avg_val + max(avg_values) * 0.02, 
-                            f'{avg_val:.0f}', ha='center', va='bottom', 
-                            fontsize=8, fontweight='bold')
-        
-        # Get FIO configuration for subtitle
-        subtitle = ""
-        if block_sizes:
-            # Use the first block size to get FIO config for subtitle
-            first_block_size = block_sizes[0]
-            config_key = (operation, first_block_size)
-            if config_key in FIO_CONFIGS:
-                subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
+                    # Store original block size, not the converted display name
+                    plt.gca()._line_data_summary.append({
+                        'test_name': test_name,
+                        'block_size': block_size,
+                        'value': avg_val,
+                        'color': colors[i]
+                    })
         
         # Customize the plot
         metric_name = 'Bandwidth (bw_mean)' if metric_type == 'bw' else 'IOPS (iops_mean)'
         plt.title(f'Average {metric_name} Performance Comparison (Line Chart): {operation.upper()} - Block Size Comparison', 
                  fontsize=16, fontweight='bold', pad=20)
-        
-        # Add subtitle with FIO configuration
-        if subtitle:
-            plt.suptitle(subtitle, fontsize=12, y=0.91, ha='right', va='bottom')
         
         plt.xlabel('Block Size', fontsize=12, fontweight='bold')
         y_label = f'Average {metric_name} [KB]' if metric_type == 'bw' else f'Average {metric_name}'
@@ -1064,9 +1055,8 @@ def create_operation_summary_comparison_avg_line_chart(df, operation, block_size
         # Set x-axis ticks
         plt.xticks(block_sizes, [get_block_size_display_name(bs) for bs in block_sizes])
         
-        # Add legend positioned lower to avoid overlap
-        plt.legend(title='Test', bbox_to_anchor=(1.05, 0.7), loc='upper left')
-        
+        # Add legend outside the graph on the right side (same as bar charts)
+        plt.legend(title='Test', bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)
         
         # Add grid for better readability
         plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
@@ -1074,9 +1064,29 @@ def create_operation_summary_comparison_avg_line_chart(df, operation, block_size
         # Set y-axis to start from 0 for better visualization
         plt.ylim(bottom=0)
         
-        # Adjust layout to prevent label cutoff and make room for legend
+        # Build right-side summary box with values per block size
+        summary_lines = [f"Values per block size ({metric_name}):"]
+        for bs in block_sizes:
+            bs_label = get_block_size_display_name(bs)
+            summary_lines.append(f"\n{bs_label}:")
+            for i, test_name in enumerate(test_names):
+                test_data = df[df['test_name'] == test_name]
+                bs_data = test_data[test_data['block_size'] == bs]
+                if operation in ['read', 'randread']:
+                    metric_col = 'read_metric' if metric_type == 'bw' else 'read_iops'
+                else:
+                    metric_col = 'write_metric' if metric_type == 'bw' else 'write_iops'
+                value = bs_data[metric_col].mean() if not bs_data.empty else 0
+                summary_lines.append(f"  {get_clean_test_name(test_name)}: {value:.0f}")
+        
+        # Place summary box on the right
+        plt.figtext(1.25, 0.15, "\n".join(summary_lines).strip(), 
+                   ha='right', va='bottom', fontsize=10, fontweight='bold',
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgray', alpha=0.8))
+
+        # Adjust layout to accommodate legend and summary
         plt.tight_layout()
-        plt.subplots_adjust(right=0.8)  # Make room for legend
+        plt.subplots_adjust(right=0.65)
         
         # Save the chart
         metric_suffix = 'bw' if metric_type == 'bw' else 'iops'
@@ -1098,8 +1108,8 @@ def create_operation_summary_comparison_total_line_chart(df, operation, block_si
     Shows the TOTAL of all VMs for each test directory.
     """
     try:
-        # Create figure
-        plt.figure(figsize=(14, 10))
+        # Create figure - increased height for better spacing
+        plt.figure(figsize=(14, 12))
         
         colors = plt.cm.Set3(np.linspace(0, 1, len(test_names)))
         
@@ -1108,9 +1118,7 @@ def create_operation_summary_comparison_total_line_chart(df, operation, block_si
             test_data = df[df['test_name'] == test_name]
             total_values = []
             
-            # Get rate_iops for this test (from first record)
-            rate_iops = test_data['rate_iops'].iloc[0] if not test_data.empty and 'rate_iops' in test_data.columns else None
-            legend_label = f"{test_name} (Rate: {rate_iops})" if rate_iops else test_name
+            legend_label = get_clean_test_name(test_name)
             
             for block_size in block_sizes:
                 bs_data = test_data[test_data['block_size'] == block_size]
@@ -1129,30 +1137,24 @@ def create_operation_summary_comparison_total_line_chart(df, operation, block_si
                     label=legend_label, color=colors[i], 
                     markerfacecolor=colors[i], markeredgecolor='black', markeredgewidth=1)
             
-            # Add data points (total values) on line points
+            # Store data for summary display below legend
+            if not hasattr(plt.gca(), '_line_data_summary'):
+                plt.gca()._line_data_summary = []
+            
             for j, (block_size, total_val) in enumerate(zip(block_sizes, total_values)):
                 if total_val > 0:  # Only show values for non-zero totals
-                    plt.text(block_size, total_val + max(total_values) * 0.02, 
-                            f'{total_val:.0f}', ha='center', va='bottom', 
-                            fontsize=8, fontweight='bold')
-        
-        # Get FIO configuration for subtitle
-        subtitle = ""
-        if block_sizes:
-            # Use the first block size to get FIO config for subtitle
-            first_block_size = block_sizes[0]
-            config_key = (operation, first_block_size)
-            if config_key in FIO_CONFIGS:
-                subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
+                    # Store original block size, not the converted display name
+                    plt.gca()._line_data_summary.append({
+                        'test_name': test_name,
+                        'block_size': block_size,
+                        'value': total_val,
+                        'color': colors[i]
+                    })
         
         # Customize the plot
         metric_name = 'Bandwidth (bw_mean)' if metric_type == 'bw' else 'IOPS (iops_mean)'
         plt.title(f'Total {metric_name} Performance Comparison (Line Chart): {operation.upper()} - Block Size Comparison', 
                  fontsize=16, fontweight='bold', pad=20)
-        
-        # Add subtitle with FIO configuration
-        if subtitle:
-            plt.suptitle(subtitle, fontsize=12, y=0.91, ha='right', va='bottom')
         
         plt.xlabel('Block Size', fontsize=12, fontweight='bold')
         y_label = f'Total {metric_name} [KB]' if metric_type == 'bw' else f'Total {metric_name}'
@@ -1161,9 +1163,8 @@ def create_operation_summary_comparison_total_line_chart(df, operation, block_si
         # Set x-axis ticks
         plt.xticks(block_sizes, [get_block_size_display_name(bs) for bs in block_sizes])
         
-        # Add legend positioned lower to avoid overlap
-        plt.legend(title='Test', bbox_to_anchor=(1.05, 0.7), loc='upper left')
-        
+        # Add legend outside the graph on the right side (same as bar charts)
+        plt.legend(title='Test', bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
         
         # Add grid for better readability
         plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
@@ -1171,9 +1172,30 @@ def create_operation_summary_comparison_total_line_chart(df, operation, block_si
         # Set y-axis to start from 0 for better visualization
         plt.ylim(bottom=0)
         
-        # Adjust layout to prevent label cutoff and make room for legend
+        # Build right-side summary box with values per block size (TOTAL)
+        metric_name = 'Bandwidth (bw_mean)' if metric_type == 'bw' else 'IOPS (iops_mean)'
+        summary_lines = [f"Values per block size ({metric_name}):"]
+        for bs in block_sizes:
+            bs_label = get_block_size_display_name(bs)
+            summary_lines.append(f"\n{bs_label}:")
+            for i, test_name in enumerate(test_names):
+                test_data = df[df['test_name'] == test_name]
+                bs_data = test_data[test_data['block_size'] == bs]
+                if operation in ['read', 'randread']:
+                    metric_col = 'read_metric' if metric_type == 'bw' else 'read_iops'
+                else:
+                    metric_col = 'write_metric' if metric_type == 'bw' else 'write_iops'
+                value = bs_data[metric_col].sum() if not bs_data.empty else 0
+                summary_lines.append(f"  {get_clean_test_name(test_name)}: {value:.0f}")
+
+        # Place summary box on the right
+        plt.figtext(1.25, 0.15, "\n".join(summary_lines).strip(), 
+                   ha='right', va='bottom', fontsize=10, fontweight='bold',
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgray', alpha=0.8))
+        
+        # Adjust layout to accommodate legend and summary
         plt.tight_layout()
-        plt.subplots_adjust(right=0.8)  # Make room for legend
+        plt.subplots_adjust(right=0.65)
         
         # Save the chart
         metric_suffix = 'bw' if metric_type == 'bw' else 'iops'
@@ -1194,8 +1216,8 @@ def create_total_all_vms_comparison_bar_chart(df, operation, block_sizes, test_n
     Shows the sum of all VMs for each test run on a single graph.
     """
     try:
-        # Create figure
-        plt.figure(figsize=(14, 10))
+        # Create figure - increased height for better spacing
+        plt.figure(figsize=(14, 12))
         
         # Prepare data for plotting
         x_pos = np.arange(len(block_sizes))
@@ -1225,7 +1247,7 @@ def create_total_all_vms_comparison_bar_chart(df, operation, block_sizes, test_n
         # Create bars for each test
         for i, test_name in enumerate(test_names):
             plt.bar(x_pos + i * width, test_totals[test_name], width, 
-                   label=test_name, color=colors[i], alpha=0.8)
+                   label=get_clean_test_name(test_name), color=colors[i], alpha=0.8)
         
         # Customize the plot
         plt.xlabel('Block Size', fontsize=12, fontweight='bold')
@@ -1242,21 +1264,30 @@ def create_total_all_vms_comparison_bar_chart(df, operation, block_sizes, test_n
         block_size_labels = [get_block_size_display_name(bs) for bs in block_sizes]
         plt.xticks(x_pos + width * (len(test_names) - 1) / 2, block_size_labels, rotation=45, ha='right')
         
-        # Add legend
-        plt.legend(title='Test Run', bbox_to_anchor=(1.05, 1), loc='upper left')
+        # Add legend outside the graph on the right side
+        plt.legend(title='Test Run', bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
         
         # Add grid
         plt.grid(axis='y', alpha=0.3, linestyle='--')
         
-        # Add value labels on bars
-        for i, test_name in enumerate(test_names):
-            for j, value in enumerate(test_totals[test_name]):
-                if value > 0:  # Only show labels for non-zero values
-                    plt.text(x_pos[j] + i * width, value + max(max(test_totals[t]) for t in test_names) * 0.01, 
-                            f'{value:.0f}', ha='center', va='bottom', fontsize=9, fontweight='bold')
+        # Build right-side summary box with values per block size
+        metric_name = 'Total IOPS' if metric_type == 'iops' else 'Total Bandwidth [KB]'
+        summary_lines = [f"Values per block size ({metric_name}):"]
+        for bs_idx, bs in enumerate(block_sizes):
+            bs_label = get_block_size_display_name(bs)
+            summary_lines.append(f"\n{bs_label}:")
+            for i, test_name in enumerate(test_names):
+                value = test_totals[test_name][bs_idx] if bs_idx < len(test_totals[test_name]) else 0
+                summary_lines.append(f"  {get_clean_test_name(test_name)}: {value:.0f}")
         
-        # Adjust layout
+        # Place summary box on the right
+        plt.figtext(1.25, 0.15, "\n".join(summary_lines).strip(), 
+                   ha='right', va='bottom', fontsize=10, fontweight='bold',
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgray', alpha=0.8))
+        
+        # Adjust layout to accommodate legend and summary
         plt.tight_layout()
+        plt.subplots_adjust(right=0.65)
         
         # Save the graph
         metric_suffix = 'iops' if metric_type == 'iops' else 'bw'
@@ -1278,8 +1309,8 @@ def create_total_all_vms_comparison_line_chart(df, operation, block_sizes, test_
     Shows the sum of all VMs for each test run on a single graph.
     """
     try:
-        # Create figure
-        plt.figure(figsize=(14, 10))
+        # Create figure - increased height for better spacing
+        plt.figure(figsize=(14, 12))
         
         colors = plt.cm.Set3(np.linspace(0, 1, len(test_names)))
         
@@ -1306,7 +1337,21 @@ def create_total_all_vms_comparison_line_chart(df, operation, block_sizes, test_
         for i, test_name in enumerate(test_names):
             plt.plot(block_sizes, test_totals[test_name], 
                     marker='o', linewidth=2, markersize=8, 
-                    label=test_name, color=colors[i])
+                    label=get_clean_test_name(test_name), color=colors[i])
+            
+            # Store data for summary display below legend
+            if not hasattr(plt.gca(), '_line_data_summary'):
+                plt.gca()._line_data_summary = []
+            
+            for j, (block_size, value) in enumerate(zip(block_sizes, test_totals[test_name])):
+                if value > 0:  # Only show values for non-zero values
+                    # Store original block size, not the converted display name
+                    plt.gca()._line_data_summary.append({
+                        'test_name': test_name,
+                        'block_size': block_size,
+                        'value': value,
+                        'color': colors[i]
+                    })
         
         # Customize the plot
         plt.xlabel('Block Size', fontsize=12, fontweight='bold')
@@ -1323,26 +1368,30 @@ def create_total_all_vms_comparison_line_chart(df, operation, block_sizes, test_
         block_size_labels = [get_block_size_display_name(bs) for bs in block_sizes]
         plt.xticks(block_sizes, block_size_labels, rotation=45, ha='right')
         
-        # Add legend
-        plt.legend(title='Test Run', bbox_to_anchor=(1.05, 1), loc='upper left')
+        # Add legend outside the graph on the right side (same as bar charts)
+        plt.legend(title='Test Run', bbox_to_anchor=(1.15, 1), loc='upper left', fontsize=10)
         
         # Add grid
         plt.grid(True, alpha=0.3, linestyle='--')
-        
-        # Add value labels on points
-        for i, test_name in enumerate(test_names):
-            for j, value in enumerate(test_totals[test_name]):
-                if value > 0:  # Only show labels for non-zero values
-                    plt.annotate(f'{value:.0f}', 
-                               (block_sizes[j], value),
-                               textcoords="offset points", 
-                               xytext=(0,10), 
-                               ha='center', 
-                               fontsize=9, 
-                               fontweight='bold')
-        
-        # Adjust layout
+
+        # Build right-side summary box with values per block size (TOTAL ALL VMs)
+        metric_name = 'Total IOPS' if metric_type == 'iops' else 'Total Bandwidth [KB]'
+        summary_lines = [f"Values per block size ({metric_name}):"]
+        for bs_idx, bs in enumerate(block_sizes):
+            bs_label = get_block_size_display_name(bs)
+            summary_lines.append(f"\n{bs_label}:")
+            for i, test_name in enumerate(test_names):
+                value = test_totals[test_name][bs_idx] if bs_idx < len(test_totals[test_name]) else 0
+                summary_lines.append(f"  {get_clean_test_name(test_name)}: {value:.0f}")
+
+        # Place summary box on the right
+        plt.figtext(1.25, 0.15, "\n".join(summary_lines).strip(), 
+                   ha='right', va='bottom', fontsize=10, fontweight='bold',
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgray', alpha=0.8))
+
+        # Adjust layout to accommodate legend and summary
         plt.tight_layout()
+        plt.subplots_adjust(right=0.65)
         
         # Save the graph
         metric_suffix = 'iops' if metric_type == 'iops' else 'bw'
@@ -1368,19 +1417,15 @@ def create_per_vm_comparison_bar_chart(df, operation, block_sizes, test_names, o
     # Create one graph per block size
     for block_size in block_sizes:
         try:
-            # Create figure
-            plt.figure(figsize=(16, 10))
+            # Create figure - increased height for better spacing
+            plt.figure(figsize=(16, 12))
             
             # Get all VMs and sort them numerically
             vm_names = df['vm_name'].unique()
-            # Sort VM names numerically (vm-1, vm-2, ..., vm-10, vm-11, etc.)
-            def sort_vm_names(vm_name):
-                # Extract the number from vm-X format
-                try:
-                    return int(vm_name.split('-')[1])
-                except (IndexError, ValueError):
-                    return 0
-            all_vms = sorted(vm_names, key=sort_vm_names)
+            # Natural sort hostnames to handle embedded numbers while working for arbitrary names
+            def natural_sort_key(s):
+                return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', str(s))]
+            all_vms = sorted(vm_names, key=natural_sort_key)
             
             # Create numeric x-axis positions for all VMs
             all_positions = range(len(all_vms))
@@ -1394,7 +1439,7 @@ def create_per_vm_comparison_bar_chart(df, operation, block_sizes, test_names, o
                 
                 # Get rate_iops for this test (from first record)
                 rate_iops = test_data['rate_iops'].iloc[0] if not test_data.empty and 'rate_iops' in test_data.columns else None
-                legend_label = f"{test_name} (Rate: {rate_iops})" if rate_iops else test_name
+                legend_label = get_clean_test_name(test_name)
                 
                 # Get metric values for each VM
                 vm_values = []
@@ -1419,11 +1464,6 @@ def create_per_vm_comparison_bar_chart(df, operation, block_sizes, test_names, o
                               color=colors[i], alpha=0.8,
                               edgecolor='black', linewidth=0.5)
             
-            # Get FIO configuration for subtitle
-            config_key = (operation, block_size)
-            subtitle = ""
-            if config_key in FIO_CONFIGS:
-                subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
             
             # Customize the plot
             metric_name = 'Bandwidth (bw_mean)' if metric_type == 'bw' else 'IOPS (iops_mean)'
@@ -1431,9 +1471,6 @@ def create_per_vm_comparison_bar_chart(df, operation, block_sizes, test_names, o
             plt.title(f'{metric_name} Performance Comparison (Per-VM Bar Chart): {operation.upper()} - {block_display} Block Size', 
                      fontsize=16, fontweight='bold', pad=20)
             
-            # Add subtitle with FIO configuration
-            if subtitle:
-                plt.suptitle(subtitle, fontsize=12, y=0.91, ha='right', va='bottom')            
             plt.xlabel('Test Machines', fontsize=12, fontweight='bold')
             y_label = f'{metric_name} [KB]' if metric_type == 'bw' else metric_name
             plt.ylabel(y_label, fontsize=12, fontweight='bold')
@@ -1467,7 +1504,7 @@ def create_per_vm_comparison_bar_chart(df, operation, block_sizes, test_names, o
             # For ≤20 VMs, don't set locators to allow all labels to show
             
             # Add legend
-            plt.legend(title='Test Directory', bbox_to_anchor=(1.05, 1), loc='upper left')
+            plt.legend(title='Test Directory', bbox_to_anchor=(1.15, 1), loc='upper left')
             
             # Add total sum values under the legend on the right side
             # Calculate total sums for each test
@@ -1489,7 +1526,7 @@ def create_per_vm_comparison_bar_chart(df, operation, block_sizes, test_names, o
             metric_name = 'Bandwidth (bw_mean)' if metric_type == 'bw' else 'IOPS (iops_mean)'
             avg_text = f"Average {metric_name}:\n"
             for i, (test_name, avg_value) in enumerate(zip(test_names, avg_values)):
-                avg_text += f"{test_name}: {avg_value:.0f}\n"
+                avg_text += f"{get_clean_test_name(test_name)}: {avg_value:.0f}\n"
             
             # Position text under the legend
             plt.figtext(0.98, 0.15, avg_text.strip(), 
@@ -1501,14 +1538,15 @@ def create_per_vm_comparison_bar_chart(df, operation, block_sizes, test_names, o
             for i, (test_name, avg_value) in enumerate(zip(test_names, avg_values)):
                 # Add horizontal line for this test's average
                 plt.axhline(y=avg_value, color=colors[i], linestyle='-', linewidth=3, alpha=0.9,
-                           label=f'{test_name} Avg: {avg_value:.0f}')
+                           label=f'{get_clean_test_name(test_name)} Avg: {avg_value:.0f}')
             
             # Add grid for better readability
             plt.grid(axis='y', alpha=0.3, linestyle='--')
             
-            # Adjust layout to prevent label cutoff
+            # Adjust layout to accommodate legend and summary
             plt.tight_layout()
-            
+            plt.subplots_adjust(right=0.65)
+
             # Generate PNG filename with block size and metric type
             metric_suffix = 'bw' if metric_type == 'bw' else 'iops'
             png_filename = os.path.join(output_dir, f'comparison_{operation}_{block_size}_per_vm_bar_{metric_suffix}.png')
@@ -1536,19 +1574,15 @@ def create_per_vm_comparison_line_chart(df, operation, block_sizes, test_names, 
     # Create one graph per block size
     for block_size in block_sizes:
         try:
-            # Create figure
-            plt.figure(figsize=(16, 10))
+            # Create figure - increased height for better spacing
+            plt.figure(figsize=(16, 12))
             
             # Get all VMs and sort them numerically
             vm_names = df['vm_name'].unique()
-            # Sort VM names numerically (vm-1, vm-2, ..., vm-10, vm-11, etc.)
-            def sort_vm_names(vm_name):
-                # Extract the number from vm-X format
-                try:
-                    return int(vm_name.split('-')[1])
-                except (IndexError, ValueError):
-                    return 0
-            all_vms = sorted(vm_names, key=sort_vm_names)
+            # Natural sort hostnames to handle embedded numbers while working for arbitrary names
+            def natural_sort_key(s):
+                return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', str(s))]
+            all_vms = sorted(vm_names, key=natural_sort_key)
             
             # Create numeric x-axis positions for all VMs
             all_positions = range(len(all_vms))
@@ -1562,7 +1596,7 @@ def create_per_vm_comparison_line_chart(df, operation, block_sizes, test_names, 
                 
                 # Get rate_iops for this test (from first record)
                 rate_iops = test_data['rate_iops'].iloc[0] if not test_data.empty and 'rate_iops' in test_data.columns else None
-                legend_label = f"{test_name} (Rate: {rate_iops})" if rate_iops else test_name
+                legend_label = get_clean_test_name(test_name)
                 
                 # Get metric values for each VM
                 vm_values = []
@@ -1585,11 +1619,6 @@ def create_per_vm_comparison_line_chart(df, operation, block_sizes, test_names, 
                         markerfacecolor=colors[i],
                         markeredgecolor='black', markeredgewidth=1)
             
-            # Get FIO configuration for subtitle
-            config_key = (operation, block_size)
-            subtitle = ""
-            if config_key in FIO_CONFIGS:
-                subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
             
             # Customize the plot
             metric_name = 'Bandwidth (bw_mean)' if metric_type == 'bw' else 'IOPS (iops_mean)'
@@ -1597,9 +1626,6 @@ def create_per_vm_comparison_line_chart(df, operation, block_sizes, test_names, 
             plt.title(f'{metric_name} Performance Comparison (Per-VM Line Chart): {operation.upper()} - {block_display} Block Size', 
                      fontsize=16, fontweight='bold', pad=20)
             
-            # Add subtitle with FIO configuration
-            if subtitle:
-                plt.suptitle(subtitle, fontsize=12, y=0.91, ha='right', va='bottom')
             
             plt.xlabel('Test Machines', fontsize=12, fontweight='bold')
             y_label = f'{metric_name} [KB]' if metric_type == 'bw' else metric_name
@@ -1634,7 +1660,7 @@ def create_per_vm_comparison_line_chart(df, operation, block_sizes, test_names, 
             # For ≤20 VMs, don't set locators to allow all labels to show
             
             # Add legend
-            plt.legend(title='Test Directory', bbox_to_anchor=(1.05, 1), loc='upper left')
+            plt.legend(title='Test Directory', bbox_to_anchor=(1.15, 1), loc='upper left')
             
             # Add total sum values under the legend on the right side
             # Calculate total sums for each test
@@ -1656,7 +1682,7 @@ def create_per_vm_comparison_line_chart(df, operation, block_sizes, test_names, 
             metric_name = 'Bandwidth (bw_mean)' if metric_type == 'bw' else 'IOPS (iops_mean)'
             avg_text = f"Average {metric_name}:\n"
             for i, (test_name, avg_value) in enumerate(zip(test_names, avg_values)):
-                avg_text += f"{test_name}: {avg_value:.0f}\n"
+                avg_text += f"{get_clean_test_name(test_name)}: {avg_value:.0f}\n"
             
             # Position text under the legend
             plt.figtext(0.98, 0.15, avg_text.strip(), 
@@ -1668,7 +1694,7 @@ def create_per_vm_comparison_line_chart(df, operation, block_sizes, test_names, 
             for i, (test_name, avg_value) in enumerate(zip(test_names, avg_values)):
                 # Add horizontal line for this test's average
                 plt.axhline(y=avg_value, color=colors[i], linestyle='-', linewidth=3, alpha=0.9,
-                           label=f'{test_name} Avg: {avg_value:.0f}')
+                           label=f'{get_clean_test_name(test_name)} Avg: {avg_value:.0f}')
             
             # Add grid for better readability
             plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
@@ -1676,8 +1702,9 @@ def create_per_vm_comparison_line_chart(df, operation, block_sizes, test_names, 
             # Set y-axis to start from 0 for better visualization
             plt.ylim(bottom=0)
             
-            # Adjust layout to prevent label cutoff
+            # Adjust layout to accommodate legend
             plt.tight_layout()
+            plt.subplots_adjust(right=0.65)  # Less space on right since legend is inside
             
             # Generate PNG filename with block size and metric type
             metric_suffix = 'bw' if metric_type == 'bw' else 'iops'
@@ -1696,6 +1723,13 @@ def create_per_vm_comparison_line_chart(df, operation, block_sizes, test_names, 
     
     return success_count
 
+def get_clean_test_name(name):
+    """
+    Return a display-friendly test name by removing '-YYYYMMDD-HHMMSS-' segments.
+    Example: 'fio-results-20250905-152136-100vm-rate-iops-10' -> 'fio-results-100vm-rate-iops-10'
+    """
+    return re.sub(r'-\d{8}-\d{6}-', '-', str(name))
+
 def main():
     parser = argparse.ArgumentParser(description='Compare FIO test results from different test runs')
     parser.add_argument('directories', nargs='+', help='Test directories to compare (e.g., dir1/ dir2/ dir3/ dir4/)')
@@ -1707,22 +1741,30 @@ def main():
     parser.add_argument('--summary-only', action='store_true',
                        help='Generate only summary graphs (skip per-VM comparison graphs)')
     
-    # Add metric selection group
-    metric_group = parser.add_mutually_exclusive_group()
-    metric_group.add_argument('--iops', action='store_true', default=True,
-                             help='Analyze IOPS performance (default)')
-    metric_group.add_argument('--bw', action='store_true',
-                             help='Analyze bandwidth performance')
+    # Add metric selection options (no longer mutually exclusive)
+    parser.add_argument('--iops', action='store_true',
+                       help='Analyze IOPS performance')
+    parser.add_argument('--bw', action='store_true',
+                       help='Analyze bandwidth performance')
     
     args = parser.parse_args()
     
-    # Determine the metric type
+    # Determine the metric types to process
+    metric_types = []
+    metric_names = []
+    
+    if args.iops:
+        metric_types.append('iops')
+        metric_names.append('IOPS (iops_mean)')
+    
     if args.bw:
-        metric_type = 'bw'
-        metric_name = 'Bandwidth (bw_mean)'
-    else:
-        metric_type = 'iops'
-        metric_name = 'IOPS (iops_mean)'
+        metric_types.append('bw')
+        metric_names.append('Bandwidth (bw_mean)')
+    
+    # If neither is specified, default to IOPS
+    if not metric_types:
+        metric_types = ['iops']
+        metric_names = ['IOPS (iops_mean)']
     
     # Validate that we have at least 2 directories
     if len(args.directories) < 2:
@@ -1737,65 +1779,77 @@ def main():
     print(f"Directories to compare: {', '.join(args.directories)}")
     print(f"Output directory: {args.output_dir}")
     print(f"Graph type: {args.graphs}")
-    print(f"Metric type: {metric_name}")
+    print(f"Metric types: {', '.join(metric_names)}")
     print()
     
-    # Process all test directories
-    print("Step 1: Processing test directories...")
-    print("-" * 40)
+    # Process each metric type
+    total_success_count = 0
     
-    all_results = {}
-    directory_names = []
-    
-    for i, directory in enumerate(args.directories, 1):
-        # Extract directory name for test identification
-        dir_name = Path(directory).name
-        directory_names.append(dir_name)
+    for metric_idx, metric_type in enumerate(metric_types, 1):
+        metric_name = metric_names[metric_idx - 1]
         
-        print(f"Processing directory {i}: {directory} (name: {dir_name})")
-        results = process_test_directory(directory, dir_name, metric_type)
-        all_results.update(results)
-        print(f"{dir_name} results: {len(results)} records")
-    
-    print(f"\nTotal directories processed: {len(args.directories)}")
-    print(f"Total records: {len(all_results)}")
-    
-    if not all_results:
-        print("No data found in any test directory")
-        return 1
-    
-    # Create comparison DataFrame
-    print("\nStep 2: Creating comparison analysis...")
-    print("-" * 40)
-    
-    df = create_comparison_dataframe(all_results)
-    
-    if df.empty:
-        print("No data available for comparison")
-        return 1
-    
-    # Create summary CSV files
-    csv_files = create_comparison_summary_csv(df, args.output_dir, metric_type)
-    
-    
-    # Generate comparison report
-    generate_comparison_report(df, args.output_dir, metric_type)
-    
-    # Create comparison graphs
-    if args.graphs != 'none':
-        if args.summary_only:
-            print(f"\nStep 3: Creating {args.graphs} summary graphs only (per-VM graphs skipped)...")
-        else:
-            print(f"\nStep 3: Creating {args.graphs} comparison graphs...")
+        print(f"\n{'='*60}")
+        print(f"PROCESSING METRIC TYPE {metric_idx}/{len(metric_types)}: {metric_name}")
+        print(f"{'='*60}")
+        
+        # Process all test directories for this metric type
+        print(f"Step 1: Processing test directories for {metric_name}...")
         print("-" * 40)
         
-        success_count = create_comparison_graphs(df, args.output_dir, args.graphs, metric_type, args.block_sizes, args.summary_only)
-        print(f"Successfully created {success_count} comparison graphs")
+        all_results = {}
+        directory_names = []
+        
+        for i, directory in enumerate(args.directories, 1):
+            # Extract directory name for test identification
+            dir_name = Path(directory).name
+            directory_names.append(dir_name)
+            
+            print(f"Processing directory {i}: {directory} (name: {dir_name})")
+            results = process_test_directory(directory, dir_name, metric_type)
+            all_results.update(results)
+            print(f"{dir_name} results: {len(results)} records")
+        
+        print(f"\nTotal directories processed: {len(args.directories)}")
+        print(f"Total records: {len(all_results)}")
+        
+        if not all_results:
+            print(f"No data found in any test directory for {metric_name}")
+            continue
+        
+        # Create comparison DataFrame
+        print(f"\nStep 2: Creating comparison analysis for {metric_name}...")
+        print("-" * 40)
+        
+        df = create_comparison_dataframe(all_results)
+        
+        if df.empty:
+            print(f"No data available for comparison for {metric_name}")
+            continue
+        
+        # Create summary CSV files
+        csv_files = create_comparison_summary_csv(df, args.output_dir, metric_type)
+        
+        # Generate comparison report
+        generate_comparison_report(df, args.output_dir, metric_type)
+        
+        # Create comparison graphs
+        if args.graphs != 'none':
+            if args.summary_only:
+                print(f"\nStep 3: Creating {args.graphs} summary graphs only (per-VM graphs skipped) for {metric_name}...")
+            else:
+                print(f"\nStep 3: Creating {args.graphs} comparison graphs for {metric_name}...")
+            print("-" * 40)
+            
+            success_count = create_comparison_graphs(df, args.output_dir, args.graphs, metric_type, args.block_sizes, args.summary_only)
+            print(f"Successfully created {success_count} comparison graphs for {metric_name}")
+            total_success_count += success_count
         
     
     print("\n" + "=" * 50)
     print("COMPARISON ANALYSIS COMPLETE!")
     print("=" * 50)
+    print(f"Total graphs created: {total_success_count}")
+    print(f"Metric types processed: {', '.join(metric_names)}")
     
     # List generated files
     generated_files = [f for f in os.listdir(args.output_dir) if f.startswith('comparison_') or f.startswith('test_comparison_')]

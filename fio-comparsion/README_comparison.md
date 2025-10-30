@@ -43,6 +43,29 @@ In future releases we will make it to work without these limitations.
 
 ## Usage
 
+```bash
+ python test_comparison_analyzer.py -h
+usage: test_comparison_analyzer.py [-h] [--graphs {bar,line,both,none}] [--output-dir OUTPUT_DIR] [--block-sizes [BLOCK_SIZES ...]] [--summary-only] [--iops] [--bw] directories [directories ...]
+
+Compare FIO test results from different test runs
+
+positional arguments:
+  directories           Test directories to compare (e.g., dir1/ dir2/ dir3/ dir4/)
+
+options:
+  -h, --help            show this help message and exit
+  --graphs {bar,line,both,none}
+                        Type of graphs to generate (default: both)
+  --output-dir OUTPUT_DIR
+                        Output directory for results (default: current directory)
+  --block-sizes [BLOCK_SIZES ...]
+                        Specify block sizes to analyze (e.g., --block-sizes 4k 8k 128k). If not specified, all available block sizes will be used.
+  --summary-only        Generate only summary graphs (skip per-VM comparison graphs)
+  --iops                Analyze IOPS performance
+  --bw                  Analyze bandwidth performance
+``` 
+
+
 ### Using the Shell Script (Recommended)
 
 ```bash
@@ -82,19 +105,19 @@ In future releases we will make it to work without these limitations.
 
 ```bash
 # Compare 2 directories (IOPS analysis - default)
-python3 test_comparison_analyzer.py baseline/ optimized/
+python3 test_comparison_analyzer.py baseline/ optimized/ --output-dir compare_results 
 
 # Compare 4 directories
-python3 test_comparison_analyzer.py test1/ test2/ test3/ test4/
+python3 test_comparison_analyzer.py test1/ test2/ test3/ test4/ --output-dir compare_results
 
 # Bandwidth analysis
-python3 test_comparison_analyzer.py baseline/ optimized/ --bw
+python3 test_comparison_analyzer.py baseline/ optimized/ --bw --output-dir compare_results
 
 # Bar charts only
-python3 test_comparison_analyzer.py before/ after/ --graphs bar
+python3 test_comparison_analyzer.py before/ after/ --graphs bar --output-dir compare_results
 
 # Output to specific directory
-python3 test_comparison_analyzer.py old_config/ new_config/ --output-dir results/
+python3 test_comparison_analyzer.py old_config/ new_config/ --output-dir compare_results 
 ```
 
 ## Output Files
