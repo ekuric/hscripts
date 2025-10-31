@@ -2333,12 +2333,13 @@ def create_latency_performance_correlation_graph(all_machines_results, output_di
             print(f"Calculated {num_machines} unique machines for {operation}")
             
             # Get FIO configuration for subtitle (use first available block size)
+            # Exclude block size from subtitle since it's already shown in each subplot title
             subtitle = ""
             if op_block_sizes:
                 first_bs = op_block_sizes[0]
                 config_key = (operation, first_bs)
                 if config_key in FIO_CONFIGS:
-                    subtitle = format_fio_subtitle(FIO_CONFIGS[config_key])
+                    subtitle = format_fio_subtitle(FIO_CONFIGS[config_key], exclude_bs=True)
             
             # Set main title
             metric_name = 'IOPS' if data_type == 'iops' else 'Bandwidth'
